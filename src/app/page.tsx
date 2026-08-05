@@ -1,69 +1,96 @@
-import Image from "next/image";
+import Link from 'next/link'
+import { Bot, Phone, GitBranch, Globe, FileCode, Zap, Check } from 'lucide-react'
+
+const features = [
+  { icon: Bot, title: 'AI Code Assistant', desc: 'Chat with context. Generate, debug, refactor code with full file awareness.' },
+  { icon: GitBranch, title: 'GitHub MCP Tools', desc: 'Search repos, read files, create PRs, review code — all from the chat.' },
+  { icon: Globe, title: 'Web Search & Fetch', desc: 'Search the web, fetch pages, gather docs without leaving your editor.' },
+  { icon: FileCode, title: 'File Operations', desc: 'Read, write, search files in your workspace. Full filesystem access.' },
+  { icon: Phone, title: 'AI Phone Calls', desc: 'Make calls via Vapi. Your assistant talks to clients, takes notes, reports back.' },
+  { icon: Zap, title: 'MCP Plugin System', desc: 'Extend with any MCP server. Add tools, databases, APIs on the fly.' },
+]
+
+const plans = [
+  { name: 'Free', price: '$0', messages: '20 messages/mo', tools: 'Basic chat only', calls: 'No calls', popular: false },
+  { name: 'Pro', price: '$29', messages: '500 messages/mo', tools: 'All MCP tools', calls: '5 calls/mo', popular: true },
+  { name: 'Unlimited', price: '$99', messages: 'Unlimited', tools: 'All MCP tools', calls: '50 calls/mo', popular: false },
+]
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex flex-col min-h-screen">
+      <header className="border-b">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-bold text-xl">
+            <Bot className="w-6 h-6 text-blue-600" />
+            Codex
+          </div>
+          <div className="flex items-center gap-4">
+            <Link href="/auth" className="text-sm text-muted-foreground hover:text-foreground">Sign in</Link>
+            <Link href="/auth" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Get Started</Link>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </header>
+
+      <section className="flex-1 flex flex-col items-center justify-center px-4 py-24 text-center">
+        <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 rounded-full px-4 py-1.5 text-sm font-medium mb-6">
+          <Zap className="w-4 h-4" />
+          AI + MCP + Phone Calls
         </div>
-      </main>
+        <h1 className="text-5xl font-bold tracking-tight max-w-2xl mb-6">
+          Your AI coding assistant<br />
+          <span className="text-blue-600">with superpowers</span>
+        </h1>
+        <p className="text-lg text-muted-foreground max-w-xl mb-8">
+          Chat with an AI that can search GitHub, browse the web, edit your files,
+          and even make phone calls. All in one place.
+        </p>
+        <Link href="/auth" className="bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-200">
+          Start building — Free
+        </Link>
+      </section>
+
+      <section className="border-t py-20 px-4">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-center mb-12">Everything you need</h2>
+          <div className="grid md:grid-cols-3 gap-6">
+            {features.map((f) => (
+              <div key={f.title} className="border rounded-xl p-6 hover:shadow-md transition">
+                <f.icon className="w-8 h-8 text-blue-600 mb-4" />
+                <h3 className="font-semibold text-lg mb-2">{f.title}</h3>
+                <p className="text-sm text-muted-foreground">{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t py-20 px-4 bg-gray-50">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-center mb-12">Simple pricing</h2>
+          <div className="grid md:grid-cols-3 gap-6">
+            {plans.map((p) => (
+              <div key={p.name} className={`border-2 rounded-xl p-6 ${p.popular ? 'border-blue-600 shadow-lg shadow-blue-100 relative' : ''}`}>
+                {p.popular && <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-full">Most popular</span>}
+                <h3 className="font-bold text-xl mb-1">{p.name}</h3>
+                <div className="text-3xl font-bold mb-4">{p.price}<span className="text-base font-normal text-muted-foreground">/mo</span></div>
+                <ul className="space-y-2 mb-6">
+                  <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.messages}</li>
+                  <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.tools}</li>
+                  <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.calls}</li>
+                </ul>
+                <Link href="/auth" className={`block text-center py-2.5 rounded-lg font-medium transition ${p.popular ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border hover:bg-gray-50'}`}>
+                  Get started
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <footer className="border-t py-8 px-4 text-center text-sm text-muted-foreground">
+        Codex — AI coding assistant with MCP tools
+      </footer>
     </div>
-  );
+  )
 }
