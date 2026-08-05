@@ -23,7 +23,7 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-xl">
             <Bot className="w-6 h-6 text-blue-600" />
-            Codex
+            Relay
           </div>
           <div className="flex items-center gap-4">
             <Link href="/auth" className="text-sm text-muted-foreground hover:text-foreground">Sign in</Link>
@@ -89,7 +89,7 @@ export default function Home() {
       </section>
 
       <footer className="border-t py-8 px-4 text-center text-sm text-muted-foreground">
-        Codex — AI coding assistant with MCP tools
+        Relay — AI coding assistant with MCP tools
       </footer>
     </div>
   )

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Codex — Your AI coding assistant",
+  title: "Relay — Your AI coding assistant",
   description: "AI-powered coding assistant with MCP tools, phone calls, and GitHub integration.",
 };
 

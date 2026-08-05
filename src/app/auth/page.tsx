@@ -43,7 +43,7 @@ export default function AuthPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <Bot className="w-10 h-10 text-blue-600 mx-auto mb-2" />
-          <h1 className="text-2xl font-bold">Welcome to Codex</h1>
+          <h1 className="text-2xl font-bold">Welcome to Relay</h1>
           <p className="text-muted-foreground text-sm">Sign in with your email</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-4">

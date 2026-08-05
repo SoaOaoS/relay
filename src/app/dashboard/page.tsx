@@ -118,7 +118,7 @@ export default function Dashboard() {
         <div className="p-4 border-b flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold">
             <Bot className="w-5 h-5 text-blue-600" />
-            Codex
+            Relay
           </div>
           <button onClick={() => setSidebarOpen(false)} className="text-muted-foreground hover:text-foreground"><PanelLeftClose className="w-4 h-4" /></button>
         </div>

@@ -5,7 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY!
 
-const SYSTEM_PROMPT = `You are Codex, an AI coding assistant with MCP tool access.
+const SYSTEM_PROMPT = `You are Relay, an AI coding assistant with MCP tool access.
 
 You can use these tools when the user asks:
 - github-search: Search code, issues, PRs on GitHub
