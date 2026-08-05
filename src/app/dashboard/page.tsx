@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Bot, Send, Phone, GitBranch, Globe, FileCode, Settings, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap } from 'lucide-react'
+import { Bot, Send, Phone, Globe, FileText, Search, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import { AVAILABLE_TOOLS, executeTool, MCPTool } from '@/lib/mcp'
@@ -163,8 +163,8 @@ export default function Dashboard() {
               {messages.length === 0 && (
                 <div className="text-center py-16">
                   <Bot className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-                  <h2 className="text-xl font-bold mb-2">What can I help you build?</h2>
-                  <p className="text-muted-foreground text-sm">Ask me to write code, search GitHub, browse the web, or make a call.</p>
+                  <h2 className="text-xl font-bold mb-2">What can I help you with?</h2>
+                  <p className="text-muted-foreground text-sm">Ask me to research, write, analyze, search the web, or make a call.</p>
                 </div>
               )}
               {messages.map((m, i) => (

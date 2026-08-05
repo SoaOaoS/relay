@@ -1,19 +1,19 @@
 import Link from 'next/link'
-import { Bot, Phone, GitBranch, Globe, FileCode, Zap, Check } from 'lucide-react'
+import { Bot, Phone, Globe, FileText, Search, Zap, Check, MessageSquare, Calendar } from 'lucide-react'
 
 const features = [
-  { icon: Bot, title: 'AI Code Assistant', desc: 'Chat with context. Generate, debug, refactor code with full file awareness.' },
-  { icon: GitBranch, title: 'GitHub MCP Tools', desc: 'Search repos, read files, create PRs, review code — all from the chat.' },
-  { icon: Globe, title: 'Web Search & Fetch', desc: 'Search the web, fetch pages, gather docs without leaving your editor.' },
-  { icon: FileCode, title: 'File Operations', desc: 'Read, write, search files in your workspace. Full filesystem access.' },
-  { icon: Phone, title: 'AI Phone Calls', desc: 'Make calls via Vapi. Your assistant talks to clients, takes notes, reports back.' },
-  { icon: Zap, title: 'MCP Plugin System', desc: 'Extend with any MCP server. Add tools, databases, APIs on the fly.' },
+  { icon: MessageSquare, title: 'Smart Chat', desc: 'Ask anything. Relay researches, writes, analyzes, and gets things done.' },
+  { icon: Globe, title: 'Web Search & Fetch', desc: 'Search the web, read articles, gather information in real time.' },
+  { icon: Search, title: 'GitHub & Code', desc: 'Browse repos, read code, review PRs, understand any project.' },
+  { icon: FileText, title: 'File & Document Help', desc: 'Read, write, edit documents, scripts, and any text files.' },
+  { icon: Phone, title: 'AI Phone Calls', desc: 'Relay calls people for you — takes notes, asks questions, reports back.' },
+  { icon: Calendar, title: 'Task Automation', desc: 'Research, summarize, translate, compare, plan — just ask.' },
 ]
 
 const plans = [
-  { name: 'Free', price: '$0', messages: '20 messages/mo', tools: 'Basic chat only', calls: 'No calls', popular: false },
-  { name: 'Pro', price: '$29', messages: '500 messages/mo', tools: 'All MCP tools', calls: '5 calls/mo', popular: true },
-  { name: 'Unlimited', price: '$99', messages: 'Unlimited', tools: 'All MCP tools', calls: '50 calls/mo', popular: false },
+  { name: 'Free', price: '$0', messages: '20 messages/mo', calls: 'No calls', popular: false },
+  { name: 'Pro', price: '$29', messages: '500 messages/mo', calls: '5 calls/mo', popular: true },
+  { name: 'Unlimited', price: '$99', messages: 'Unlimited', calls: '50 calls/mo', popular: false },
 ]
 
 export default function Home() {
@@ -35,18 +35,18 @@ export default function Home() {
       <section className="flex-1 flex flex-col items-center justify-center px-4 py-24 text-center">
         <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 rounded-full px-4 py-1.5 text-sm font-medium mb-6">
           <Zap className="w-4 h-4" />
-          AI + MCP + Phone Calls
+          AI Assistant + Phone Calls
         </div>
         <h1 className="text-5xl font-bold tracking-tight max-w-2xl mb-6">
-          Your AI coding assistant<br />
-          <span className="text-blue-600">with superpowers</span>
+          Your personal AI assistant<br />
+          <span className="text-blue-600">that actually does things</span>
         </h1>
         <p className="text-lg text-muted-foreground max-w-xl mb-8">
-          Chat with an AI that can search GitHub, browse the web, edit your files,
-          and even make phone calls. All in one place.
+          Relay researches the web, browses GitHub, edits files, makes phone calls,
+          and gets stuff done. One conversation, infinite possibilities.
         </p>
         <Link href="/auth" className="bg-blue-600 text-white px-8 py-3 rounded-xl text-lg font-semibold hover:bg-blue-700 transition shadow-lg shadow-blue-200">
-          Start building — Free
+          Try Relay — Free
         </Link>
       </section>
 
@@ -76,7 +76,6 @@ export default function Home() {
                 <div className="text-3xl font-bold mb-4">{p.price}<span className="text-base font-normal text-muted-foreground">/mo</span></div>
                 <ul className="space-y-2 mb-6">
                   <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.messages}</li>
-                  <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.tools}</li>
                   <li className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-600" />{p.calls}</li>
                 </ul>
                 <Link href="/auth" className={`block text-center py-2.5 rounded-lg font-medium transition ${p.popular ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border hover:bg-gray-50'}`}>
@@ -89,7 +88,7 @@ export default function Home() {
       </section>
 
       <footer className="border-t py-8 px-4 text-center text-sm text-muted-foreground">
-        Relay — AI coding assistant with MCP tools
+        Relay — Your personal AI assistant
       </footer>
     </div>
   )

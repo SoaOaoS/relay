@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Relay — Your AI coding assistant",
-  description: "AI-powered coding assistant with MCP tools, phone calls, and GitHub integration.",
+  title: "Relay — Your personal AI assistant",
+  description: "Your AI assistant that can search the web, browse GitHub, edit files, make phone calls, and get things done.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

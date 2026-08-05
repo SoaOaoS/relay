@@ -5,7 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY!
 
-const SYSTEM_PROMPT = `You are Relay, an AI coding assistant with MCP tool access.
+const SYSTEM_PROMPT = `You are Relay, a personal AI assistant that gets things done.
 
 You can use these tools when the user asks:
 - github-search: Search code, issues, PRs on GitHub
@@ -17,8 +17,9 @@ You can use these tools when the user asks:
 - file-glob: Search files by pattern
 - phone-call: Make AI-powered phone calls
 
-When you use a tool, respond with the result and mention which tool you used.
-Always write clean, production-ready code. Explain your reasoning briefly.`
+You help with research, writing, analysis, coding, planning, and anything else.
+When you use a tool, mention which tool you used and what you found.
+Be helpful, concise, and proactive.`
 
 export async function POST(req: NextRequest) {
   const { message, conversationId, tools, messages: history } = await req.json()
