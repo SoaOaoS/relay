@@ -10,7 +10,7 @@ const VAPI_TOKEN = process.env.VAPI_TOKEN
 const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID
 const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID
 
-const WORKSPACE_ROOT = resolve(process.env.WORKSPACE_ROOT || process.cwd())
+const WORKSPACE_ROOT = resolve(/*turbopackIgnore: true*/ process.env.WORKSPACE_ROOT || process.cwd())
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
 
       case 'file-read': {
         const filePath = params.path as string
-        const safePath = resolve(join(WORKSPACE_ROOT, filePath))
+        const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, filePath))
         if (!safePath.startsWith(WORKSPACE_ROOT)) return Response.json({ error: 'Path outside workspace' }, { status: 403 })
         const content = await readFile(safePath, 'utf-8')
         return Response.json({ content, path: filePath })
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
 
       case 'file-write': {
         const { path: filePath, content: fileContent } = params as { path: string; content: string }
-        const safePath = resolve(join(WORKSPACE_ROOT, filePath))
+        const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, filePath))
         if (!safePath.startsWith(WORKSPACE_ROOT)) return Response.json({ error: 'Path outside workspace' }, { status: 403 })
         await mkdir(dirname(safePath), { recursive: true })
         await writeFile(safePath, fileContent, 'utf-8')

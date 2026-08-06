@@ -11,7 +11,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 const VAPI_TOKEN = process.env.VAPI_TOKEN
 const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID
 const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID
-const WORKSPACE_ROOT = resolve(process.env.WORKSPACE_ROOT || process.cwd())
+const WORKSPACE_ROOT = resolve(/*turbopackIgnore: true*/ process.env.WORKSPACE_ROOT || process.cwd())
 const MAX_TOOL_ROUNDS = 6
 
 const SYSTEM_PROMPT = `You are Relay, a personal AI assistant that gets things done — not just chat.
@@ -80,12 +80,12 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       return content
     }
     case 'file-read': {
-      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
+      const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, args.path as string))
       if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
       return await readFile(safePath, 'utf-8')
     }
     case 'file-write': {
-      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
+      const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, args.path as string))
       if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
       await mkdir(resolve(safePath, '..'), { recursive: true })
       await writeFile(safePath, args.content as string, 'utf-8')
