@@ -5,7 +5,7 @@ import { resolve, join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { glob as globAsync } from 'glob'
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com/api'
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || ''
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN
@@ -144,16 +144,33 @@ export async function POST(req: NextRequest) {
   try {
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++
-      const res = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
+      // Build request — Ollama native API (/api/chat)
+      const requestBody: any = {
+        model: OLLAMA_MODEL,
+        messages: ollamaMessages,
+        stream: false,
+      }
+      if (activeTools.length > 0) requestBody.tools = activeTools
+
+      const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(OLLAMA_API_KEY ? { 'Authorization': `Bearer ${OLLAMA_API_KEY}` } : {}),
         },
-        body: JSON.stringify({ model: OLLAMA_MODEL, messages: ollamaMessages, tools: activeTools, stream: false, max_tokens: 4096 }),
+        body: JSON.stringify(requestBody),
       })
+      
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText)
+        finalResponse = `Model error (${res.status}): ${errText.slice(0, 200)}`
+        break
+      }
+      
       const data = await res.json()
-      const msg = data.choices?.[0]?.message
+      // Ollama native API returns { message: { role, content, tool_calls } }
+      // OpenAI-compatible returns { choices: [{ message: { ... } }] }
+      const msg = data.message || data.choices?.[0]?.message
       if (!msg) { finalResponse = 'No response from model.'; break }
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
