@@ -68,17 +68,7 @@ export default function AuthPage() {
       if (data.error) {
         setError(data.error)
         setLoading(false)
-        return
-      }
-      // Use the token hash to verify and get a session
-      const { data: session, error: verr } = await supabase.auth.verifyOtp({
-        token_hash: data.tokenHash,
-        type: 'email',
-      })
-      if (verr) {
-        setError(verr.message)
-        setLoading(false)
-      } else if (session.session) {
+      } else if (data.ok) {
         window.location.href = '/dashboard'
       }
     } catch (e: any) {
