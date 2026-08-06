@@ -4,14 +4,11 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { resolve, join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { glob as globAsync } from 'glob'
+import { buildCredEnv } from '@/lib/mcp-providers'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || ''
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN
-const VAPI_TOKEN = process.env.VAPI_TOKEN
-const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID
-const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID
 const WORKSPACE_ROOT = resolve(/*turbopackIgnore: true*/ process.env.WORKSPACE_ROOT || process.cwd())
 const MAX_TOOL_ROUNDS = 6
 
@@ -46,7 +43,11 @@ const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call.', parameters: { type: 'object', properties: { number: { type: 'string' }, context: { type: 'string' } }, required: ['number'] } } },
 ]
 
-async function executeTool(userId: string, name: string, args: Record<string, unknown>): Promise<string> {
+async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>): Promise<string> {
+  const GITHUB_TOKEN = creds.GITHUB_TOKEN || process.env.GITHUB_TOKEN || ''
+  const VAPI_TOKEN = creds.VAPI_TOKEN || process.env.VAPI_TOKEN || ''
+  const VAPI_PHONE_NUMBER_ID = creds.VAPI_PHONE_NUMBER_ID || process.env.VAPI_PHONE_NUMBER_ID || ''
+  const VAPI_ASSISTANT_ID = creds.VAPI_ASSISTANT_ID || process.env.VAPI_ASSISTANT_ID || ''
   switch (name) {
     case 'github-search': {
       const res = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(args.query as string)}`, { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } })
@@ -121,6 +122,11 @@ export async function POST(req: NextRequest) {
 
   await supabaseAdmin.from('profiles').upsert({ id: user.id, messages_used: used + 1 })
 
+  // Load user's MCP config (credentials + enabled tools)
+  const { data: userSettings } = await supabaseAdmin.from('user_settings').select('mcp_config, enabled_tools').eq('user_id', user.id).single()
+  const userCreds = buildCredEnv(userSettings?.mcp_config || {})
+  const savedEnabledTools = new Set<string>(userSettings?.enabled_tools || [])
+
   let convId = conversationId
   if (!convId) {
     const { data: conv } = await supabaseAdmin.from('conversations').insert({ user_id: user.id, title: message.slice(0, 100) }).select().single()
@@ -135,7 +141,8 @@ export async function POST(req: NextRequest) {
     { role: 'user', content: message },
   ]
 
-  const enabled = new Set<string>(enabledTools || [])
+  // Use tools from the request, or fall back to saved settings
+  const enabled = new Set<string>(enabledTools?.length > 0 ? enabledTools : Array.from(savedEnabledTools))
   const activeTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS
   const toolCallsLog: { name: string; result: string }[] = []
   let finalResponse = ''
@@ -179,7 +186,7 @@ export async function POST(req: NextRequest) {
           const toolName = tc.function?.name || tc.name
           let toolArgs: Record<string, unknown> = {}
           try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { toolArgs = {} }
-          const result = await executeTool(user.id, toolName, toolArgs)
+          const result = await executeTool(user.id, toolName, toolArgs, userCreds)
           toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
           ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
         }

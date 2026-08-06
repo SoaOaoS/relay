@@ -241,6 +241,9 @@ export default function Dashboard() {
             </button>
             {settingsOpen && (
               <div className="absolute bottom-full left-0 right-0 mb-1 bg-[#18181b] border border-zinc-800 rounded-lg shadow-xl py-1">
+                <Link href="/settings" className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition">
+                  <Settings className="w-3 h-3" /> MCP Providers
+                </Link>
                 <button onClick={handleLogout} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition">
                   <LogOut className="w-3 h-3" /> Sign out
                 </button>
