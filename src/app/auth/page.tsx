@@ -17,20 +17,17 @@ export default function AuthPage() {
     setLoading(true)
     setError('')
     try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 15000)
       const { error: err } = await supabase.auth.signInWithOtp({
         email,
         options: { shouldCreateUser: true },
       })
-      clearTimeout(timeout)
       if (err) {
         setError(err.message)
       } else {
         setSent(true)
       }
     } catch (e: any) {
-      setError(e.message || 'Request failed. Check your connection.')
+      setError(e.message || 'Request failed')
     }
     setLoading(false)
   }
@@ -53,6 +50,39 @@ export default function AuthPage() {
       }
     } catch (e: any) {
       setError(e.message || 'Verification failed')
+      setLoading(false)
+    }
+  }
+
+  async function handleDevLogin() {
+    if (!email) { setError('Enter your email first'); return }
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/auth/dev-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setError(data.error)
+        setLoading(false)
+        return
+      }
+      // Use the token hash to verify and get a session
+      const { data: session, error: verr } = await supabase.auth.verifyOtp({
+        token_hash: data.tokenHash,
+        type: 'email',
+      })
+      if (verr) {
+        setError(verr.message)
+        setLoading(false)
+      } else if (session.session) {
+        window.location.href = '/dashboard'
+      }
+    } catch (e: any) {
+      setError(e.message || 'Dev login failed')
       setLoading(false)
     }
   }
@@ -85,6 +115,18 @@ export default function AuthPage() {
               className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
             >
               {loading ? 'Sending...' : 'Send code'}
+            </button>
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t" /></div>
+              <div className="relative flex justify-center text-xs"><span className="bg-white px-2 text-muted-foreground">or</span></div>
+            </div>
+            <button
+              type="button"
+              onClick={handleDevLogin}
+              disabled={loading || !email}
+              className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-50 transition disabled:opacity-50"
+            >
+              {loading ? 'Signing in...' : 'Sign in instantly (no email)'}
             </button>
           </form>
         ) : (
