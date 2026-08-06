@@ -16,12 +16,22 @@ export default function AuthPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { error: err } = await supabase.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: true },
-    })
-    if (err) setError(err.message)
-    else setSent(true)
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
+      const { error: err } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true },
+      })
+      clearTimeout(timeout)
+      if (err) {
+        setError(err.message)
+      } else {
+        setSent(true)
+      }
+    } catch (e: any) {
+      setError(e.message || 'Request failed. Check your connection.')
+    }
     setLoading(false)
   }
 
@@ -29,16 +39,21 @@ export default function AuthPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { data, error: err } = await supabase.auth.verifyOtp({
-      email,
-      token: code,
-      type: 'email',
-    })
-    if (err) {
-      setError(err.message)
+    try {
+      const { data, error: err } = await supabase.auth.verifyOtp({
+        email,
+        token: code,
+        type: 'email',
+      })
+      if (err) {
+        setError(err.message)
+        setLoading(false)
+      } else if (data.session) {
+        window.location.href = '/dashboard'
+      }
+    } catch (e: any) {
+      setError(e.message || 'Verification failed')
       setLoading(false)
-    } else if (data.session) {
-      window.location.href = '/dashboard'
     }
   }
 
