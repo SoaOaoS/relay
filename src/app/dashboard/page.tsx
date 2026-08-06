@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Bot, Send, Phone, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap, CreditCard, Loader2 } from 'lucide-react'
+import { Bot, Send, Phone, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap, CreditCard, Loader2, PhoneCall } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import { AVAILABLE_TOOLS } from '@/lib/mcp'
@@ -18,6 +18,16 @@ interface Message {
 interface Conversation {
   id: string
   title: string
+  created_at: string
+}
+
+interface Call {
+  id: string
+  phone_number: string
+  call_id: string | null
+  status: string
+  transcript: string | null
+  duration: number | null
   created_at: string
 }
 
@@ -43,7 +53,14 @@ export default function Dashboard() {
   const [phoneNumber, setPhoneNumber] = useState('')
   const [phoneCalling, setPhoneCalling] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  const [calls, setCalls] = useState<Call[]>([])
+  const [callsOpen, setCallsOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Close sidebar by default on mobile
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) setSidebarOpen(false)
+  }, [])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -77,6 +94,19 @@ export default function Dashboard() {
     }
     setLoadingMessages(false)
   }
+
+  async function loadCalls(userId: string) {
+    const { data } = await supabase.from('calls').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(20)
+    if (data) setCalls(data)
+  }
+
+  // Poll for call status updates every 10s when calls panel is open
+  useEffect(() => {
+    if (!user || !callsOpen) return
+    loadCalls(user.id)
+    const interval = setInterval(() => loadCalls(user.id), 10000)
+    return () => clearInterval(interval)
+  }, [user, callsOpen])
 
   function switchConversation(convId: string) {
     setActiveConv(convId)
@@ -159,8 +189,13 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-white">
+      {/* Mobile backdrop */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/30 z-20 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <div className={cn('border-r flex flex-col transition-all duration-200 bg-gray-50/50', sidebarOpen ? 'w-64' : 'w-0 overflow-hidden')}>
+      <div className={cn('border-r flex flex-col transition-all duration-200 bg-gray-50/50 z-30 md:relative fixed inset-y-0 left-0 shadow-lg md:shadow-none', sidebarOpen ? 'w-64' : 'w-0 overflow-hidden')}>
         <div className="p-4 border-b flex items-center justify-between bg-white">
           <div className="flex items-center gap-2 font-bold text-lg">
             <Bot className="w-5 h-5 text-blue-600" />
@@ -208,6 +243,9 @@ export default function Dashboard() {
           <div className="flex-1" />
           <button onClick={() => setToolsOpen(!toolsOpen)} className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition', toolsOpen ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100')}>
             <Zap className="w-4 h-4" /> Tools
+          </button>
+          <button onClick={() => setCallsOpen(!callsOpen)} className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition', callsOpen ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100')}>
+            <PhoneCall className="w-4 h-4" /> Calls
           </button>
           <button onClick={() => setPhoneModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition">
             <Phone className="w-4 h-4" /> Call
@@ -298,6 +336,36 @@ export default function Dashboard() {
                   </div>
                 </label>
               ))}
+            </div>
+          )}
+
+          {/* Calls panel */}
+          {callsOpen && (
+            <div className="w-80 border-l overflow-y-auto p-4 space-y-3 bg-gray-50/50">
+              <h3 className="font-semibold text-sm flex items-center gap-2"><PhoneCall className="w-4 h-4" /> Call History</h3>
+              <p className="text-xs text-gray-500">Auto-refreshes every 10s</p>
+              {calls.length === 0 ? (
+                <p className="text-sm text-gray-400 py-8 text-center">No calls yet</p>
+              ) : (
+                calls.map(c => (
+                  <div key={c.id} className="border rounded-lg p-3 bg-white space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">{c.phone_number}</span>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full', c.status === 'completed' ? 'bg-green-100 text-green-700' : c.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700')}>
+                        {c.status}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString()}</div>
+                    {c.duration != null && <div className="text-xs text-gray-500">Duration: {Math.floor(c.duration / 60)}m {c.duration % 60}s</div>}
+                    {c.transcript && (
+                      <details className="mt-1">
+                        <summary className="text-xs text-blue-600 cursor-pointer">Transcript</summary>
+                        <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap max-h-40 overflow-y-auto">{c.transcript}</p>
+                      </details>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
