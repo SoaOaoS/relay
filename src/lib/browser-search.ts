@@ -266,7 +266,6 @@ export async function browserAction(params: {
         }
         return JSON.stringify({ results })
       }
-      }
 
       default:
         return JSON.stringify({ error: `Unknown action: ${params.action}` })
