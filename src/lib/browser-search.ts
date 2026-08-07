@@ -161,15 +161,15 @@ export async function browserAction(params: {
       }
 
       case 'screenshot': {
-        // Return a concise summary — focus on interactive elements + short context
+        // Return a rich structured description of the page — like an accessibility tree
+        // This lets a text-only LLM understand the page layout without vision
         const result = await page.evaluate(() => {
-          // Get interactive elements with their text + a unique selector
-          const elements: { tag: string; text: string; selector: string; type: string; value: string }[] = []
-          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="combobox"], [role="listbox"], [role="option"], [role="listitem"], [onclick], label')
+          // 1. Get the accessibility tree of interactive elements
+          const interactive: { tag: string; role: string; text: string; selector: string; type: string; value: string; placeholder: string; name: string; id: string; href: string; ariaLabel: string; checked: boolean; disabled: boolean; options: string[] }[] = []
+          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="option"], [role="combobox"], [role="listbox"], [role="listitem"], [role="link"], [onclick], label')
           els.forEach(el => {
             const e = el as HTMLElement
             if (e.offsetParent === null) return
-            const text = (e.textContent || '').trim().slice(0, 40)
             const tag = e.tagName.toLowerCase()
             let selector = ''
             if (e.id) selector = '#' + CSS.escape(e.id)
@@ -180,28 +180,66 @@ export async function browserAction(params: {
               if (firstClass) selector = `${tag}.${CSS.escape(firstClass)}`
             }
             if (!selector) selector = tag
-            elements.push({
+
+            // Get options for select elements
+            let options: string[] = []
+            if (tag === 'select') {
+              options = Array.from(e.querySelectorAll('option')).map(o => o.textContent?.trim() || (o as HTMLOptionElement).value).filter(Boolean).slice(0, 20)
+            }
+
+            interactive.push({
               tag,
-              text: text || (e as HTMLInputElement).placeholder || '',
+              role: e.getAttribute('role') || '',
+              text: (e.textContent || '').trim().slice(0, 60),
               selector,
               type: (e as HTMLInputElement).type || '',
               value: (e as HTMLInputElement).value || '',
+              placeholder: (e as HTMLInputElement).placeholder || '',
+              name: (e as HTMLInputElement).name || '',
+              id: e.id || '',
+              href: (e as HTMLAnchorElement).href || '',
+              ariaLabel: e.getAttribute('aria-label') || '',
+              checked: (e as HTMLInputElement).checked || false,
+              disabled: (e as HTMLInputElement).disabled || false,
+              options,
             })
           })
           // Deduplicate
           const seen = new Set<string>()
-          const deduped = elements.filter(e => {
+          const deduped = interactive.filter(e => {
             const key = e.selector + e.text
             if (seen.has(key)) return false
             seen.add(key)
             return true
-          }).slice(0, 40)
+          })
 
-          // Get short page text — just enough for context
+          // 2. Get ALL visible text on the page, not truncated
           const body = document.body?.innerText || ''
-          const pageText = body.replace(/\s+/g, ' ').trim().slice(0, 2000)
+          const pageText = body.replace(/\s+/g, ' ').trim().slice(0, 4000)
 
-          return { pageText, interactive: deduped }
+          // 3. Get form structure — inputs with their labels
+          const forms: { action: string; method: string; fields: { label: string; selector: string; type: string; required: boolean }[] }[] = []
+          document.querySelectorAll('form').forEach(form => {
+            const fields: { label: string; selector: string; type: string; required: boolean }[] = []
+            form.querySelectorAll('input, textarea, select').forEach(input => {
+              const el = input as HTMLInputElement
+              if (el.type === 'hidden' || el.type === 'submit') return
+              let label = ''
+              // Find associated label
+              if (el.id) {
+                const labelEl = document.querySelector(`label[for="${el.id}"]`)
+                if (labelEl) label = labelEl.textContent?.trim() || ''
+              }
+              if (!label) label = el.placeholder || el.getAttribute('aria-label') || el.name || ''
+              let sel = ''
+              if (el.id) sel = '#' + el.id
+              else if (el.name) sel = `${el.tagName.toLowerCase()}[name="${el.name}"]`
+              fields.push({ label, selector: sel, type: el.type || el.tagName.toLowerCase(), required: el.required })
+            })
+            forms.push({ action: form.action, method: form.method, fields })
+          })
+
+          return { pageText, interactive: deduped, forms }
         })
         return JSON.stringify({ ...result, url: page.url() })
       }
