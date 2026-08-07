@@ -112,6 +112,7 @@ export default function SettingsPage() {
             const providerToolIds = provider.tools.map(t => t.id)
             const allEnabled = providerToolIds.every(id => enabledTools.has(id))
             const hasCreds = provider.credentials && provider.credentials.length > 0
+            const isManaged = !!provider.managed
             const userCreds = mcpConfig[provider.id] || {}
             const credsFilled = hasCreds ? provider.credentials!.every(c => userCreds[c.key]) : true
 
@@ -134,6 +135,9 @@ export default function SettingsPage() {
                       {allEnabled && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">Active</span>}
                       {allEnabled && hasCreds && !credsFilled && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400">Missing credentials</span>
+                      )}
+                      {isManaged && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400">Included in Pro</span>
                       )}
                     </div>
                     <p className="text-sm text-zinc-400 mt-0.5">{provider.description}</p>
@@ -170,8 +174,8 @@ export default function SettingsPage() {
                   ))}
                 </div>
 
-                {/* Credentials */}
-                {hasCreds && allEnabled && (
+                {/* Credentials — hidden for managed providers (hosted by Relay) */}
+                {hasCreds && allEnabled && !isManaged && (
                   <div className="border-t border-zinc-800 p-5 space-y-4">
                     <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Credentials</p>
                     {provider.credentials!.map((cred) => (
@@ -199,6 +203,16 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Managed provider notice */}
+                {isManaged && allEnabled && (
+                  <div className="border-t border-zinc-800 p-5">
+                    <p className="text-xs text-zinc-400">
+                      <span className="text-indigo-400 font-medium">Relay-managed service.</span>{' '}
+                      No configuration needed — calls are placed through Relay&apos;s phone infrastructure. Available on Pro and Unlimited plans.
+                    </p>
                   </div>
                 )}
               </div>

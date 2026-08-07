@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Phone, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap, CreditCard, Loader2, PhoneCall, Bot, Settings, ChevronDown } from 'lucide-react'
+import { Send, Phone, LogOut, Plus, MessageSquare, PanelLeftClose, PanelLeft, Zap, CreditCard, Loader2, PhoneCall, Bot, Settings, ChevronDown, Calendar, UtensilsCrossed, BedDouble, Pill, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 import { AVAILABLE_TOOLS } from '@/lib/mcp'
+import { CALL_TEMPLATES, CallTemplate, CallField } from '@/lib/call-templates'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Link from 'next/link'
@@ -30,6 +31,7 @@ interface Call {
   transcript: string | null
   duration: number | null
   created_at: string
+  template?: string | null
 }
 
 interface Profile {
@@ -54,6 +56,9 @@ export default function Dashboard() {
   const [phoneModal, setPhoneModal] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState('')
   const [phoneCalling, setPhoneCalling] = useState(false)
+  const [phoneStep, setPhoneStep] = useState<'template' | 'details'>('template')
+  const [selectedTemplate, setSelectedTemplate] = useState<CallTemplate | null>(null)
+  const [templateValues, setTemplateValues] = useState<Record<string, string>>({})
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [calls, setCalls] = useState<Call[]>([])
   const [callsOpen, setCallsOpen] = useState(false)
@@ -149,18 +154,54 @@ export default function Dashboard() {
     setSending(false)
   }
 
+  function openPhoneModal() {
+    setPhoneStep('template')
+    setSelectedTemplate(null)
+    setTemplateValues({})
+    setPhoneNumber('')
+    setPhoneModal(true)
+  }
+
+  function pickTemplate(tpl: CallTemplate) {
+    setSelectedTemplate(tpl)
+    setTemplateValues({})
+    setPhoneStep('details')
+  }
+
+  function updateTemplateField(key: string, value: string) {
+    setTemplateValues(prev => ({ ...prev, [key]: value }))
+  }
+
+  function requiredFieldsFilled(): boolean {
+    if (!selectedTemplate) return false
+    return selectedTemplate.fields.every(f => !f.required || (templateValues[f.key] && templateValues[f.key].trim()))
+  }
+
   async function handlePhoneCall() {
-    if (!phoneNumber.trim()) return
+    if (!phoneNumber.trim() || !selectedTemplate || !requiredFieldsFilled()) return
     setPhoneCalling(true)
     try {
       const res = await fetch('/api/vapi/call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: phoneNumber, context: messages.map(m => `${m.role}: ${m.content}`).join('\n') }),
+        body: JSON.stringify({
+          number: phoneNumber,
+          templateId: selectedTemplate.id,
+          templateValues,
+          conversationId: activeConv,
+          context: selectedTemplate.buildContext(templateValues),
+        }),
       })
       const data = await res.json()
-      setMessages(prev => [...prev, { role: 'assistant', content: `📞 **Call placed to ${phoneNumber}**\n\nCall ID: \`${data.callId}\`\n\nI'll update you when the call completes.` }])
-      setPhoneModal(false)
+      if (!res.ok) {
+        const msg = data.error || 'Failed to place call.'
+        const upgrade = data.upgradeRequired ? ' Upgrade to Pro to enable phone calls.' : ''
+        setMessages(prev => [...prev, { role: 'assistant', content: `❌ ${msg}${upgrade}` }])
+      } else {
+        const tplLabel = data.template || selectedTemplate.label
+        setMessages(prev => [...prev, { role: 'assistant', content: `📞 **${tplLabel} call placed to ${phoneNumber}**\n\nCall ID: \`${data.callId}\`\n\nThe assistant is on the line — I'll report back when the call completes with a summary and transcript.` }])
+        setPhoneModal(false)
+      }
       setPhoneNumber('')
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: '❌ Failed to place call.' }])
@@ -265,7 +306,7 @@ export default function Dashboard() {
           <button onClick={() => setCallsOpen(!callsOpen)} className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition', callsOpen ? 'bg-indigo-500/10 text-indigo-400' : 'text-zinc-400 hover:text-white hover:bg-white/5')}>
             <PhoneCall className="w-4 h-4" /> Calls
           </button>
-          <button onClick={() => setPhoneModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition">
+          <button onClick={openPhoneModal} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition">
             <Phone className="w-4 h-4" /> Call
           </button>
         </div>
@@ -378,7 +419,10 @@ export default function Dashboard() {
                 calls.map(c => (
                   <div key={c.id} className="border border-zinc-800 rounded-xl p-3 bg-[#111113] space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-zinc-200">{c.phone_number}</span>
+                      <div>
+                        <span className="text-sm font-medium text-zinc-200">{c.phone_number}</span>
+                        {c.template && <span className="text-xs text-zinc-500 ml-2">· {c.template}</span>}
+                      </div>
                       <span className={cn('text-xs px-2 py-0.5 rounded-full', c.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : c.status === 'failed' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-400')}>{c.status}</span>
                     </div>
                     <div className="text-xs text-zinc-500">{new Date(c.created_at).toLocaleString()}</div>
@@ -400,18 +444,106 @@ export default function Dashboard() {
       {/* Phone modal */}
       {phoneModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setPhoneModal(false)}>
-          <div className="bg-[#111113] border border-zinc-800 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-4">
+          <div className="bg-[#111113] border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-md mx-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center gap-2 p-5 border-b border-zinc-800 sticky top-0 bg-[#111113] z-10">
+              {phoneStep === 'details' && (
+                <button onClick={() => setPhoneStep('template')} className="text-zinc-500 hover:text-white text-sm">&larr;</button>
+              )}
               <Phone className="w-5 h-5 text-indigo-400" />
-              <h3 className="font-semibold text-lg">Make a phone call</h3>
+              <h3 className="font-semibold text-lg flex-1">
+                {phoneStep === 'template' ? 'New phone call' : selectedTemplate?.label}
+              </h3>
+              <button onClick={() => setPhoneModal(false)} className="text-zinc-500 hover:text-white text-sm">✕</button>
             </div>
-            <p className="text-sm text-zinc-400 mb-4">Relay will call this number and handle the conversation. It reports back with a summary.</p>
-            <input type="tel" placeholder="+33634554177" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} className="w-full px-4 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/50" />
-            <div className="flex gap-2">
-              <button onClick={() => setPhoneModal(false)} className="flex-1 py-2.5 border border-zinc-800 rounded-xl text-sm text-zinc-300 hover:bg-white/5 transition">Cancel</button>
-              <button onClick={handlePhoneCall} disabled={phoneCalling || !phoneNumber.trim()} className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 text-white py-2.5 rounded-xl text-sm font-medium hover:from-indigo-400 hover:to-violet-500 transition disabled:opacity-50">
-                {phoneCalling ? 'Calling...' : 'Call'}
-              </button>
+
+            <div className="p-5">
+              {/* Step 1: Choose a template */}
+              {phoneStep === 'template' && (
+                <div className="space-y-2">
+                  <p className="text-sm text-zinc-400 mb-4">What do you need the call for?</p>
+                  {CALL_TEMPLATES.map((tpl) => {
+                    const Icon = { Calendar, UtensilsCrossed, BedDouble, Pill, Phone }[tpl.icon] || Phone
+                    return (
+                      <button
+                        key={tpl.id}
+                        onClick={() => pickTemplate(tpl)}
+                        className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-zinc-800 hover:border-indigo-500/40 hover:bg-indigo-500/5 transition group text-left"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                          <Icon className="w-5 h-5 text-indigo-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-zinc-100">{tpl.label}</div>
+                          <div className="text-xs text-zinc-500 truncate">{tpl.description}</div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-indigo-400 transition shrink-0" />
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Step 2: Fill in the template fields + phone number */}
+              {phoneStep === 'details' && selectedTemplate && (
+                <div className="space-y-4">
+                  <p className="text-sm text-zinc-400">{selectedTemplate.description}</p>
+
+                  {selectedTemplate.fields.map((field: CallField) => (
+                    <div key={field.key}>
+                      <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
+                        {field.label} {field.required && <span className="text-red-400">*</span>}
+                      </label>
+                      {field.description && <p className="text-xs text-zinc-500 mb-1.5">{field.description}</p>}
+                      {field.type === 'select' && field.options ? (
+                        <select
+                          value={templateValues[field.key] || ''}
+                          onChange={(e) => updateTemplateField(field.key, e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition"
+                        >
+                          <option value="" disabled>Select…</option>
+                          {field.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type}
+                          placeholder={field.placeholder}
+                          value={templateValues[field.key] || ''}
+                          onChange={(e) => updateTemplateField(field.key, e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition"
+                        />
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Phone number */}
+                  <div className="pt-2 border-t border-zinc-800">
+                    <label className="text-xs font-medium text-zinc-300 mb-1.5 block">
+                      Phone number to call <span className="text-red-400">*</span>
+                    </label>
+                    <p className="text-xs text-zinc-500 mb-1.5">International format, e.g. +33123456789</p>
+                    <input
+                      type="tel"
+                      placeholder="+33123456789"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={() => setPhoneStep('template')} className="px-4 py-2.5 border border-zinc-800 rounded-xl text-sm text-zinc-300 hover:bg-white/5 transition">Back</button>
+                    <button
+                      onClick={handlePhoneCall}
+                      disabled={phoneCalling || !phoneNumber.trim() || !requiredFieldsFilled()}
+                      className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 text-white py-2.5 rounded-xl text-sm font-medium hover:from-indigo-400 hover:to-violet-500 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {phoneCalling ? <><Loader2 className="w-4 h-4 animate-spin" /> Calling…</> : <><Phone className="w-4 h-4" /> Place call</>}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

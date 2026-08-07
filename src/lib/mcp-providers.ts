@@ -7,6 +7,10 @@ export interface MCPProvider {
   icon: string
   tools: MCPToolDef[]
   credentials?: MCPCredential[]
+  // A "managed" provider is hosted by Relay itself: credentials live in server
+  // env vars (never in the DB) and access is gated by the subscription plan.
+  // The settings UI must NOT show credential inputs for managed providers.
+  managed?: boolean
 }
 
 export interface MCPToolDef {
@@ -69,16 +73,14 @@ export const MCP_PROVIDERS: MCPProvider[] = [
   {
     id: 'phone',
     name: 'Phone Calls',
-    description: 'AI-powered outbound calls via Vapi',
+    description: 'AI-powered outbound calls — included on Pro & Unlimited',
     icon: 'phone',
     tools: [
-      { id: 'phone-call', name: 'Phone Call', description: 'Place AI phone calls' },
+      { id: 'phone-call', name: 'Phone Call', description: 'Place AI phone calls (managed by Relay)' },
     ],
-    credentials: [
-      { key: 'VAPI_TOKEN', label: 'Vapi Token', type: 'password', placeholder: 'xxxxxxxx-xxxx-xxxx', required: true },
-      { key: 'VAPI_PHONE_NUMBER_ID', label: 'Phone Number ID', type: 'text', placeholder: 'xxxxxxxx', required: true },
-      { key: 'VAPI_ASSISTANT_ID', label: 'Assistant ID', type: 'text', placeholder: 'xxxxxxxx', required: true },
-    ],
+    // Managed provider: credentials are hosted by Relay (server-side env),
+    // gated by subscription plan. Users never see or enter Vapi tokens.
+    managed: true,
   },
 ]
 

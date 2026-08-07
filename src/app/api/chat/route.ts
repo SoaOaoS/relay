@@ -5,6 +5,7 @@ import { resolve, join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { glob as globAsync } from 'glob'
 import { buildCredEnv } from '@/lib/mcp-providers'
+import { canUsePhoneCalls } from '@/lib/stripe'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
@@ -43,11 +44,12 @@ const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call.', parameters: { type: 'object', properties: { number: { type: 'string' }, context: { type: 'string' } }, required: ['number'] } } },
 ]
 
-async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>): Promise<string> {
+async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>, phoneEnabled: boolean): Promise<string> {
   const GITHUB_TOKEN = creds.GITHUB_TOKEN || process.env.GITHUB_TOKEN || ''
-  const VAPI_TOKEN = creds.VAPI_TOKEN || process.env.VAPI_TOKEN || ''
-  const VAPI_PHONE_NUMBER_ID = creds.VAPI_PHONE_NUMBER_ID || process.env.VAPI_PHONE_NUMBER_ID || ''
-  const VAPI_ASSISTANT_ID = creds.VAPI_ASSISTANT_ID || process.env.VAPI_ASSISTANT_ID || ''
+  // Vapi is a managed service — always uses server credentials, gated by plan.
+  const VAPI_TOKEN = process.env.VAPI_TOKEN || ''
+  const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID || ''
+  const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID || ''
   switch (name) {
     case 'github-search': {
       const res = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(args.query as string)}`, { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } })
@@ -98,8 +100,11 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       return JSON.stringify({ files: matches.slice(0, 100) })
     }
     case 'phone-call': {
+      if (!phoneEnabled) return JSON.stringify({ error: 'Phone calls require a Pro or Unlimited plan.' })
+      if (!VAPI_TOKEN || !VAPI_PHONE_NUMBER_ID || !VAPI_ASSISTANT_ID) return JSON.stringify({ error: 'Phone calls are not configured on the server.' })
       const vapiRes = await fetch('https://api.vapi.ai/call', { method: 'POST', headers: { 'Authorization': `Bearer ${VAPI_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumberId: VAPI_PHONE_NUMBER_ID, assistantId: VAPI_ASSISTANT_ID, customer: { number: args.number as string }, assistantOverrides: { variableValues: { context: args.context || 'No prior context', user_name: 'User' } } }) })
       const callData = await vapiRes.json()
+      if (!vapiRes.ok) return JSON.stringify({ error: callData.message || 'Vapi error' })
       await supabaseAdmin.from('calls').insert({ user_id: userId, phone_number: args.number as string, call_id: callData.id, status: 'initiated' })
       return JSON.stringify({ callId: callData.id, status: callData.status })
     }
@@ -143,7 +148,10 @@ export async function POST(req: NextRequest) {
 
   // Use tools from the request, or fall back to saved settings
   const enabled = new Set<string>(enabledTools?.length > 0 ? enabledTools : Array.from(savedEnabledTools))
-  const activeTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS
+  // Managed phone-call tool: gated by plan, regardless of user toggle.
+  const phoneAllowed = canUsePhoneCalls(profile)
+  if (!phoneAllowed) enabled.delete('phone-call')
+  const activeTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS.filter(t => t.function.name !== 'phone-call' || phoneAllowed)
   const toolCallsLog: { name: string; result: string }[] = []
   let finalResponse = ''
   let rounds = 0
@@ -186,7 +194,7 @@ export async function POST(req: NextRequest) {
           const toolName = tc.function?.name || tc.name
           let toolArgs: Record<string, unknown> = {}
           try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { toolArgs = {} }
-          const result = await executeTool(user.id, toolName, toolArgs, userCreds)
+          const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed)
           toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
           ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
         }
