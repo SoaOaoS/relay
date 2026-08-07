@@ -51,6 +51,11 @@ const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call. The assistant will speak on your behalf.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
 ]
 
+async function safeJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  try { return JSON.parse(text) } catch { return { _error: 'Non-JSON response', _text: text.slice(0, 500) } }
+}
+
 async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>, phoneEnabled: boolean): Promise<string> {
   const GITHUB_TOKEN = creds.GITHUB_TOKEN || process.env.GITHUB_TOKEN || ''
   const VAPI_TOKEN = process.env.VAPI_TOKEN || ''
@@ -58,35 +63,43 @@ async function executeTool(userId: string, name: string, args: Record<string, un
   switch (name) {
     case 'github-search': {
       const res = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(args.query as string)}`, { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } })
-      const data = await res.json()
-      return JSON.stringify({ items: data.items?.slice(0, 10) || [], total: data.total_count })
+      const data = await safeJson(res)
+      const items = (data.items as unknown[]) || []
+      return JSON.stringify({ items: items.slice(0, 10), total: data.total_count || 0, ...(data._errors ? { error: data._text } : {}) })
     }
     case 'github-read': {
       const { owner, repo, path } = args as { owner: string; repo: string; path: string }
       const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } })
-      const data = await res.json()
-      if (data.content) return Buffer.from(data.content, 'base64').toString('utf-8')
+      const data = await safeJson(res)
+      if (data._errors) return JSON.stringify({ error: 'GitHub API error', detail: data._text })
+      if (data.content) return Buffer.from(data.content as string, 'base64').toString('utf-8')
       return JSON.stringify(data)
     }
     case 'web-search': {
       const q = args.query as string
       const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`)
-      const ddgData = await ddgRes.json()
+      const ddgData = await safeJson(ddgRes)
+      if (ddgData._errors) return JSON.stringify({ error: 'Search failed', query: q })
       const results: { type: string; text: string; url?: string; source?: string }[] = []
-      if (ddgData.AbstractText) results.push({ type: 'abstract', text: ddgData.AbstractText, source: ddgData.AbstractURL })
-      for (const t of ddgData.RelatedTopics || []) {
-        if (t.Text) results.push({ type: 'related', text: t.Text, url: t.FirstURL })
-        if (t.Topics) for (const sub of t.Topics) if (sub.Text) results.push({ type: 'related', text: sub.Text, url: sub.FirstURL })
+      if (ddgData.AbstractText) results.push({ type: 'abstract', text: ddgData.AbstractText as string, source: ddgData.AbstractURL as string })
+      for (const t of (ddgData.RelatedTopics as unknown[]) || []) {
+        const topic = t as { Text?: string; FirstURL?: string; Topics?: { Text?: string; FirstURL?: string }[] }
+        if (topic.Text) results.push({ type: 'related', text: topic.Text, url: topic.FirstURL })
+        if (topic.Topics) for (const sub of topic.Topics) if (sub.Text) results.push({ type: 'related', text: sub.Text, url: sub.FirstURL })
       }
-      return JSON.stringify({ results: results.slice(0, 10), abstract: ddgData.AbstractText || '' })
+      return JSON.stringify({ results: results.slice(0, 10), abstract: (ddgData.AbstractText as string) || '' })
     }
     case 'web-fetch': {
       const url = args.url as string
-      const res = await fetch(url, { headers: { 'User-Agent': 'Relay/1.0' } })
-      const text = await res.text()
-      const isHtml = (res.headers.get('content-type') || '').includes('text/html')
-      const content = isHtml ? text.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 20000) : text.slice(0, 20000)
-      return content
+      try {
+        const res = await fetch(url, { headers: { 'User-Agent': 'Relay/1.0' }, redirect: 'follow' })
+        const text = await res.text()
+        const isHtml = (res.headers.get('content-type') || '').includes('text/html')
+        const content = isHtml ? text.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 20000) : text.slice(0, 20000)
+        return content || 'Empty page'
+      } catch (e) {
+        return JSON.stringify({ error: `Failed to fetch ${url}: ${e instanceof Error ? e.message : String(e)}` })
+      }
     }
     case 'file-read': {
       const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
@@ -139,9 +152,9 @@ async function executeTool(userId: string, name: string, args: Record<string, un
           assistantOverrides: { variableValues: { context: callContext, user_name: 'User' } },
         }),
       })
-      const callData = await vapiRes.json()
-      if (!vapiRes.ok) return JSON.stringify({ error: callData.message || 'Vapi error' })
-      await supabaseAdmin.from('calls').insert({ user_id: userId, phone_number: number, call_id: callData.id, status: 'initiated', template: templateLabel })
+      const callData = await safeJson(vapiRes)
+      if (!vapiRes.ok) return JSON.stringify({ error: (callData.message as string) || 'Vapi error' })
+      await supabaseAdmin.from('calls').insert({ user_id: userId, phone_number: number, call_id: callData.id as string, status: 'initiated', template: templateLabel })
       return JSON.stringify({ callId: callData.id, status: callData.status, template: templateLabel, message: `Call placed to ${number}. The assistant will report back when the call completes.` })
     }
     default: return JSON.stringify({ error: `Unknown tool: ${name}` })
