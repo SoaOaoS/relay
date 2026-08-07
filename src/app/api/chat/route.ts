@@ -149,6 +149,7 @@ async function executeTool(userId: string, name: string, args: Record<string, un
 }
 
 type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: unknown[]; tool_call_id?: string; name?: string }
+type ToolCall = { function?: { name?: string; arguments?: string }; id?: string; name?: string }
 
 function sseEncode(data: unknown): string {
   return `data: ${JSON.stringify(data)}\n\n`
@@ -232,7 +233,30 @@ export async function POST(req: NextRequest) {
               break
             }
 
-            const data = await res.json()
+            // Parse response — handle both streaming and non-streaming from Ollama
+            const resText = await res.text()
+            let data: { message?: { content?: string; tool_calls?: ToolCall[] }; choices?: { message?: { content?: string; tool_calls?: ToolCall[] } }[] }
+            try {
+              // Ollama native (non-stream) returns a single JSON object
+              data = JSON.parse(resText)
+            } catch {
+              // Might be newline-delimited JSON (streaming despite stream:false)
+              const lines = resText.split('\n').filter(l => l.trim())
+              if (lines.length === 0) {
+                finalResponse = 'Empty response from model.'
+                send({ type: 'error', error: finalResponse })
+                break
+              }
+              try {
+                // Take the last complete JSON line (has done:true)
+                const lastLine = lines[lines.length - 1]
+                data = JSON.parse(lastLine)
+              } catch {
+                finalResponse = `Failed to parse model response: ${resText.slice(0, 200)}`
+                send({ type: 'error', error: finalResponse })
+                break
+              }
+            }
             const msg = data.message || data.choices?.[0]?.message
             if (!msg) { finalResponse = 'No response from model.'; send({ type: 'error', error: finalResponse }); break }
 
@@ -360,7 +384,15 @@ export async function POST(req: NextRequest) {
         break
       }
 
-      const data = await res.json()
+      const resText = await res.text()
+      let data: { message?: { content?: string; tool_calls?: ToolCall[] }; choices?: { message?: { content?: string; tool_calls?: ToolCall[] } }[] }
+      try {
+        data = JSON.parse(resText)
+      } catch {
+        const lines = resText.split('\n').filter(l => l.trim())
+        if (lines.length === 0) { finalResponse = 'Empty response from model.'; break }
+        try { data = JSON.parse(lines[lines.length - 1]) } catch { finalResponse = `Failed to parse response: ${resText.slice(0, 200)}`; break }
+      }
       const msg = data.message || data.choices?.[0]?.message
       if (!msg) { finalResponse = 'No response from model.'; break }
 
