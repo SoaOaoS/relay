@@ -40,7 +40,7 @@ export const CALL_TEMPLATES: CallTemplate[] = [
 ${v.date ? `Preferred date: ${v.date}${v.time ? ` at ${v.time}` : ''}.` : 'No specific date — ask for the earliest availability.'}
 ${v.notes ? `Additional context: ${v.notes}` : ''}
 Be polite and concise. If they cannot accommodate the request, ask for alternatives. Confirm the final appointment details before ending the call.`,
-    buildContext: (v) => `${v.purpose} at ${v.business} for ${v.name}${v.date ? ` on ${v.date}${v.time ? ` ${v.time}` : ''}` : ''}.`,
+    buildContext: (v) => `Call ${v.business} for ${v.name}. Purpose: ${v.purpose}.${v.date ? ` Preferred: ${v.date}${v.time ? ` at ${v.time}` : ''}.` : ' Ask for earliest availability.'}${v.notes ? ` Notes: ${v.notes}` : ''}`,
   },
   {
     id: 'restaurant',
@@ -59,7 +59,7 @@ Be polite and concise. If they cannot accommodate the request, ask for alternati
 Date: ${v.date} at ${v.time}. Party size: ${v.partySize} guests.
 ${v.notes ? `Special requests: ${v.notes}` : ''}
 If the requested slot is unavailable, ask for the closest alternative. Confirm the reservation details before ending the call.`,
-    buildContext: (v) => `Reservation at ${v.restaurant} for ${v.partySize} people on ${v.date} at ${v.time} (name: ${v.name}).`,
+    buildContext: (v) => `Reserve a table at ${v.restaurant} for ${v.name}. ${v.partySize} guests on ${v.date} at ${v.time}.${v.notes ? ` Special requests: ${v.notes}` : ''} If the slot is unavailable, ask for the closest alternative and confirm the booking.`,
   },
   {
     id: 'hotel',
@@ -79,7 +79,7 @@ If the requested slot is unavailable, ask for the closest alternative. Confirm t
 Check-in: ${v.checkIn}, check-out: ${v.checkOut}. Guests: ${v.guests}.${v.roomType && v.roomType !== 'No preference' ? ` Room type: ${v.roomType}.` : ''}
 ${v.notes ? `Special requests: ${v.notes}` : ''}
 Ask for the total price and cancellation policy. If unavailable, ask for alternatives. Confirm the booking before ending the call.`,
-    buildContext: (v) => `Hotel booking at ${v.hotel} for ${v.name}, ${v.checkIn} to ${v.checkOut}, ${v.guests} guests.`,
+    buildContext: (v) => `Book a room at ${v.hotel} for ${v.name}. Check-in ${v.checkIn}, check-out ${v.checkOut}, ${v.guests} guests.${v.roomType && v.roomType !== 'No preference' ? ` Room: ${v.roomType}.` : ''}${v.notes ? ` Requests: ${v.notes}` : ''} Ask for total price and cancellation policy. Confirm the booking before ending.`,
   },
   {
     id: 'pharmacy',
@@ -95,7 +95,7 @@ Ask for the total price and cancellation policy. If unavailable, ask for alterna
     buildInstructions: (v) => `You are calling ${v.pharmacy} to check if they have ${v.medication} in stock${v.quantity ? ` (quantity: ${v.quantity})` : ''}.
 ${v.name ? `The caller's name is ${v.name}.` : ''}
 Ask if it's available, the price, and if they can hold it. Be concise and polite.`,
-    buildContext: (v) => `Checking availability of ${v.medication} at ${v.pharmacy}.`,
+    buildContext: (v) => `Call ${v.pharmacy} to check if ${v.medication} is in stock${v.quantity ? ` (quantity: ${v.quantity})` : ''}.${v.name ? ` Caller: ${v.name}.` : ''} Ask for price and if they can hold it.`,
   },
   {
     id: 'custom',
@@ -111,7 +111,7 @@ Ask if it's available, the price, and if they can hold it. Be concise and polite
 Objective: ${v.objective}
 ${v.notes ? `Additional details: ${v.notes}` : ''}
 Stay focused on the objective. Ask follow-up questions if needed. Summarise the outcome before ending the call.`,
-    buildContext: (v) => v.objective,
+    buildContext: (v) => `Call on behalf of ${v.name || 'the user'}. Objective: ${v.objective}${v.notes ? `. Additional details: ${v.notes}` : ''}. Stay focused on the objective and summarise the outcome at the end.`,
   },
 ]
 

@@ -43,14 +43,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Phone calls are not configured on the server.' }, { status: 503 })
   }
 
-  // Build assistant instructions + context from the template (if provided)
-  let instructions: string | undefined
+  // Build call context from the template (if provided).
+  // The assistant's system prompt already contains {{context}} and {{user_name}}
+  // variables — we just pass the values via variableValues.
   let callContext = context || 'No prior context'
   let templateLabel = 'Custom call'
   if (templateId) {
     const tpl = getTemplate(templateId)
     if (tpl && templateValues) {
-      instructions = tpl.buildInstructions(templateValues)
       callContext = tpl.buildContext(templateValues)
       templateLabel = tpl.label
     }
@@ -71,7 +71,6 @@ export async function POST(req: NextRequest) {
         customer: { number: normalized },
         assistantOverrides: {
           variableValues: { context: callContext, user_name: user.email || 'User' },
-          ...(instructions ? { instructions } : {}),
         },
       }),
     })
