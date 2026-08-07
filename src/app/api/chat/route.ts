@@ -111,9 +111,12 @@ async function executeTool(userId: string, name: string, args: Record<string, un
     }
     case 'web-search': {
       const q = args.query as string
+      console.log('[web-search] query:', q)
       const { results, error } = await webSearch(q)
+      console.log('[web-search] results:', results.length, 'error:', error || 'none')
       if (error && results.length === 0) return JSON.stringify({ error: `Search failed: ${error}`, query: q })
       const formatted = results.map(r => ({ type: 'result', text: `${r.title} — ${r.snippet}`, url: r.url }))
+      console.log('[web-search] returning', formatted.length, 'results')
       return JSON.stringify({ results: formatted, query: q })
     }
     case 'web-fetch': {
