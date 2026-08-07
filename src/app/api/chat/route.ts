@@ -7,6 +7,7 @@ import { glob as globAsync } from 'glob'
 import { buildCredEnv } from '@/lib/mcp-providers'
 import { canUsePhoneCalls } from '@/lib/stripe'
 import { getTemplate } from '@/lib/call-templates'
+import { connectMCPClient, mcpToolsToDefinitions, type UserMCPServer, type MCPClientResult } from '@/lib/mcp-client'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
@@ -56,7 +57,12 @@ async function safeJson(res: Response): Promise<Record<string, unknown>> {
   try { return JSON.parse(text) } catch { return { _error: 'Non-JSON response', _text: text.slice(0, 500) } }
 }
 
-async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>, phoneEnabled: boolean): Promise<string> {
+async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>, phoneEnabled: boolean, mcpClient?: MCPClientResult | null): Promise<string> {
+  // MCP server tools — names contain "__" (serverName__toolName)
+  if (name.includes('__') && mcpClient) {
+    return mcpClient.callTool(name, args)
+  }
+
   const GITHUB_TOKEN = creds.GITHUB_TOKEN || process.env.GITHUB_TOKEN || ''
   const VAPI_TOKEN = process.env.VAPI_TOKEN || ''
   const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID || ''
@@ -188,6 +194,19 @@ export async function POST(req: NextRequest) {
   const userCreds = buildCredEnv(userSettings?.mcp_config || {})
   const savedEnabledTools = new Set<string>(userSettings?.enabled_tools || [])
 
+  // Load user's MCP servers and connect to them
+  const { data: userMCPServers } = await supabaseAdmin
+    .from('user_mcp_servers')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('enabled', true)
+
+  let mcpClient: MCPClientResult | null = null
+  if (userMCPServers && userMCPServers.length > 0) {
+    mcpClient = await connectMCPClient(userMCPServers as UserMCPServer[])
+  }
+  const mcpToolDefs = mcpClient ? mcpToolsToDefinitions(mcpClient.tools) : []
+
   let convId = conversationId
   if (!convId) {
     const { data: conv } = await supabaseAdmin.from('conversations').insert({ user_id: user.id, title: message.slice(0, 100) }).select().single()
@@ -205,7 +224,9 @@ export async function POST(req: NextRequest) {
   const enabled = new Set<string>(enabledTools?.length > 0 ? enabledTools : Array.from(savedEnabledTools))
   const phoneAllowed = canUsePhoneCalls(profile)
   if (!phoneAllowed) enabled.delete('phone-call')
-  const activeTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS.filter(t => t.function.name !== 'phone-call' || phoneAllowed)
+  const builtinTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS.filter(t => t.function.name !== 'phone-call' || phoneAllowed)
+  // Merge built-in tools with user's MCP server tools
+  const activeTools = [...builtinTools, ...mcpToolDefs]
   const toolCallsLog: { name: string; result: string }[] = []
   let finalResponse = ''
   let rounds = 0
@@ -286,7 +307,7 @@ export async function POST(req: NextRequest) {
                 const toolName = tc.function?.name || tc.name || ''
                 let toolArgs: Record<string, unknown> = {}
                 try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { /* empty */ }
-                const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed)
+                const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed, mcpClient)
                 toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
                 send({ type: 'tool_done', tool: toolName, round: rounds })
                 return { tc, result, toolName }
@@ -358,6 +379,7 @@ export async function POST(req: NextRequest) {
           await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: `Error: ${msg}` })
           send({ type: 'error', error: msg })
         }
+        if (mcpClient) await mcpClient.cleanup()
         controller.close()
       },
     })
@@ -430,10 +452,12 @@ export async function POST(req: NextRequest) {
     }
     if (!finalResponse) finalResponse = 'I reached the tool-call limit without a final answer.'
     await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: finalResponse })
+    if (mcpClient) await mcpClient.cleanup()
     return Response.json({ response: finalResponse, conversationId: convId, toolCalls: toolCallsLog })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: `Error: ${msg}` })
+    if (mcpClient) await mcpClient.cleanup()
     return Response.json({ response: `Error: ${msg}`, conversationId: convId, toolCalls: toolCallsLog })
   }
 }

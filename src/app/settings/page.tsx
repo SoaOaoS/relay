@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { MCP_PROVIDERS, MCPProvider } from '@/lib/mcp-providers'
-import { Zap, Globe, FileText, Phone, Check, ArrowLeft, Loader2, Save, Eye, EyeOff, Code2 } from 'lucide-react'
+import { Zap, Globe, FileText, Phone, Check, ArrowLeft, Loader2, Save, Eye, EyeOff, Code2, Server, Plus, Trash2, Power } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +16,10 @@ export default function SettingsPage() {
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set())
   const [saved, setSaved] = useState(false)
   const [showCreds, setShowCreds] = useState<Record<string, boolean>>({})
+  const [mcpServers, setMcpServers] = useState<{ id: string; name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean }[]>([])
+  const [showAddServer, setShowAddServer] = useState(false)
+  const [newServer, setNewServer] = useState({ name: '', command: '', args: '', env: '' })
+  const [addingServer, setAddingServer] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -30,6 +34,48 @@ export default function SettingsPage() {
     if (data.mcpConfig) setMcpConfig(data.mcpConfig)
     if (data.enabledTools) setEnabledTools(new Set(data.enabledTools))
     setLoading(false)
+    loadMCPServers()
+  }
+
+  async function loadMCPServers() {
+    const res = await fetch('/api/mcp/servers')
+    const data = await res.json()
+    if (data.servers) setMcpServers(data.servers)
+  }
+
+  async function addMCPServer() {
+    if (!newServer.name || !newServer.command) return
+    setAddingServer(true)
+    const args = newServer.args.split(/\s+/).filter(Boolean)
+    let env: Record<string, string> = {}
+    try { env = JSON.parse(newServer.env || '{}') } catch { /* ignore */ }
+    await fetch('/api/mcp/servers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newServer.name, command: newServer.command, args, env }),
+    })
+    setNewServer({ name: '', command: '', args: '', env: '' })
+    setShowAddServer(false)
+    setAddingServer(false)
+    loadMCPServers()
+  }
+
+  async function deleteMCPServer(id: string) {
+    await fetch('/api/mcp/servers', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    loadMCPServers()
+  }
+
+  async function toggleMCPServer(id: string, enabled: boolean) {
+    await fetch('/api/mcp/servers', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, enabled }),
+    })
+    loadMCPServers()
   }
 
   async function handleSave() {
@@ -218,6 +264,105 @@ export default function SettingsPage() {
               </div>
             )
           })}
+        </div>
+
+        {/* MCP Servers section */}
+        <div className="mt-12">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold">MCP Servers</h2>
+              <p className="text-zinc-400 mt-1 text-sm">Connect external MCP servers (stdio or HTTP). Tools from these servers are available to the AI in chat.</p>
+            </div>
+            <button
+              onClick={() => setShowAddServer(!showAddServer)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-zinc-800 hover:border-indigo-500/40 hover:bg-indigo-500/5 transition text-sm text-zinc-300"
+            >
+              <Plus className="w-4 h-4" /> Add server
+            </button>
+          </div>
+
+          {/* Add server form */}
+          {showAddServer && (
+            <div className="rounded-2xl border border-zinc-800 bg-[#111113] p-5 space-y-4 mb-4">
+              <div>
+                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">Name <span className="text-red-400">*</span></label>
+                <input
+                  value={newServer.name}
+                  onChange={(e) => setNewServer({ ...newServer, name: e.target.value })}
+                  placeholder="github-mcp"
+                  className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">Command or URL <span className="text-red-400">*</span></label>
+                <p className="text-xs text-zinc-500 mb-1.5">Local: <code className="text-indigo-400">npx</code> or a binary path. Remote: <code className="text-indigo-400">https://...</code> URL</p>
+                <input
+                  value={newServer.command}
+                  onChange={(e) => setNewServer({ ...newServer, command: e.target.value })}
+                  placeholder="npx -y @anthropic-ai/mcp-server-github or https://mcp.example.com/sse"
+                  className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">Args (space-separated)</label>
+                <input
+                  value={newServer.args}
+                  onChange={(e) => setNewServer({ ...newServer, args: e.target.value })}
+                  placeholder="-y @anthropic-ai/mcp-server-github"
+                  className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-300 mb-1.5 block">Env vars (JSON)</label>
+                <input
+                  value={newServer.env}
+                  onChange={(e) => setNewServer({ ...newServer, env: e.target.value })}
+                  placeholder='{"GITHUB_TOKEN": "ghp_xxx"}'
+                  className="w-full px-3.5 py-2.5 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                />
+              </div>
+              <button
+                onClick={addMCPServer}
+                disabled={addingServer || !newServer.name || !newServer.command}
+                className="flex items-center gap-2 bg-gradient-to-r from-indigo-500 to-violet-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:from-indigo-400 hover:to-violet-500 transition disabled:opacity-50"
+              >
+                {addingServer ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {addingServer ? 'Adding...' : 'Add server'}
+              </button>
+            </div>
+          )}
+
+          {/* Server list */}
+          <div className="space-y-3">
+            {mcpServers.length === 0 && !showAddServer && (
+              <div className="rounded-2xl border border-zinc-800 bg-[#111113] p-8 text-center">
+                <Server className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
+                <p className="text-sm text-zinc-500">No MCP servers configured. Add one to extend the AI with custom tools.</p>
+              </div>
+            )}
+            {mcpServers.map((srv) => (
+              <div key={srv.id} className={cn('rounded-2xl border bg-[#111113] p-4', srv.enabled ? 'border-zinc-700' : 'border-zinc-800 opacity-60')}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                    <Server className={cn('w-5 h-5', srv.enabled ? 'text-indigo-400' : 'text-zinc-500')} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{srv.name}</span>
+                      {srv.enabled && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">Active</span>}
+                    </div>
+                    <code className="text-xs text-zinc-500 truncate block">{srv.command} {srv.args.join(' ')}</code>
+                  </div>
+                  <button onClick={() => toggleMCPServer(srv.id, !srv.enabled)} className="text-zinc-500 hover:text-white p-2 transition" title={srv.enabled ? 'Disable' : 'Enable'}>
+                    <Power className={cn('w-4 h-4', srv.enabled && 'text-emerald-400')} />
+                  </button>
+                  <button onClick={() => deleteMCPServer(srv.id)} className="text-zinc-500 hover:text-red-400 p-2 transition" title="Delete">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mt-8 flex items-center gap-3">
