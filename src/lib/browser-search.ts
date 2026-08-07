@@ -13,63 +13,27 @@ const LAUNCH_ARGS = [
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-// Decode a Bing tracking URL to get the real URL
-function decodeBingUrl(bingUrl: string): string {
-  try {
-    const url = new URL(bingUrl)
-    const u = url.searchParams.get('u')
-    if (u) {
-      // Bing encodes the URL as base64-ish in the 'u' param, prefixed with 'a1'
-      const decoded = Buffer.from(u.startsWith('a1') ? u.slice(2) : u, 'base64').toString('utf-8')
-      if (decoded.startsWith('http')) return decoded
-    }
-    return bingUrl
-  } catch {
-    return bingUrl
-  }
-}
+// SearXNG runs locally on the VPS (Docker, port 8888)
+const SEARXNG_URL = process.env.SEARXNG_URL || 'http://localhost:8888'
 
-// Search the web using Puppeteer + Bing (forced English)
+// Search using local SearXNG instance (aggregates Google, Bing, DDG, etc.)
 export async function webSearch(query: string): Promise<{ results: { title: string; url: string; snippet: string }[]; error?: string }> {
-  let browser
   try {
-    browser = await puppeteer.launch({
-      executablePath: CHROMIUM_PATH,
-      headless: true,
-      args: LAUNCH_ARGS,
+    const res = await fetch(`${SEARXNG_URL}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=en-US`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
     })
-
-    const page = await browser.newPage()
-    await page.setUserAgent(UA)
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
-    // Force English results with setlang and cc params
-    await page.goto(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10&setlang=en-US&cc=US`, {
-      waitUntil: 'networkidle2',
-      timeout: 15000,
-    })
-
-    const results = await page.evaluate(() => {
-      const items: { title: string; url: string; snippet: string }[] = []
-      const resultItems = document.querySelectorAll('li.b_algo')
-      resultItems.forEach((li, i) => {
-        if (i >= 10) return
-        const link = li.querySelector('h2 a') as HTMLAnchorElement
-        const title = link?.textContent?.trim() || li.querySelector('h2')?.textContent?.trim() || ''
-        const snippet = li.querySelector('.b_caption p')?.textContent?.trim() || ''
-        if (link?.href && title) {
-          items.push({ title, url: link.href, snippet })
-        }
-      })
-      return items
-    })
-
-    // Decode Bing tracking URLs to get real URLs
-    const decoded = results.map(r => ({ ...r, url: decodeBingUrl(r.url) }))
-
-    await browser.close()
-    return { results: decoded }
+    if (!res.ok) {
+      return { results: [], error: `SearXNG returned HTTP ${res.status}` }
+    }
+    const data = await res.json() as { results?: { title?: string; url?: string; content?: string }[] }
+    const results = (data.results || []).slice(0, 10).map(r => ({
+      title: r.title || '',
+      url: r.url || '',
+      snippet: (r.content || '').slice(0, 200),
+    }))
+    return { results }
   } catch (e) {
-    if (browser) await browser.close().catch(() => {})
     return { results: [], error: e instanceof Error ? e.message : String(e) }
   }
 }
