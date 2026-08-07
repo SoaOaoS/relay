@@ -5,7 +5,7 @@ import { buildCredEnv } from '@/lib/mcp-providers'
 import { canUsePhoneCalls } from '@/lib/stripe'
 import { getTemplate } from '@/lib/call-templates'
 import { connectMCPClient, mcpToolsToDefinitions, type UserMCPServer, type MCPClientResult } from '@/lib/mcp-client'
-import { webSearch, webFetch } from '@/lib/browser-search'
+import { webSearch, webFetch, webFormSubmit } from '@/lib/browser-search'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
@@ -39,9 +39,15 @@ Use this to read a specific file from a GitHub repository.
 - Use for: "read the README of owner/repo", "show me the package.json of X"
 - Requires: owner, repo, and file path
 
-### phone-call — for making AI PHONE CALLS
-Use this to place an outbound phone call. An AI assistant will speak on your behalf.
-- Use for: "call this number", "phone this restaurant", "make a reservation by phone"
+### web-form-submit — for filling out and submitting FORMS on websites
+Use this to make reservations, bookings, or enquiries via online forms. This fills in fields and clicks submit in a real browser.
+- Use for: "book a table at restaurant X", "make a reservation", "fill out the contact form"
+- Requires: URL of the page, array of fields (selector + value), optional submit button selector
+- ALWAYS try this BEFORE phone-call when a website has an online form
+
+### phone-call — for making AI PHONE CALLS (LAST RESORT)
+Use this ONLY when online forms are not available or have failed. An AI assistant will speak on your behalf.
+- Use for: "call this number", "phone this restaurant" — but ONLY after trying web-form-submit first
 - Requires: phone number in E.164 format (+countrycode...)
 - The assistant handles the conversation — you just provide the context
 
@@ -57,17 +63,20 @@ Use this to place an outbound phone call. An AI assistant will speak on your beh
 - web-search = search the INTERNET (general web)
 - github-search = search GITHUB ONLY (code, repos, issues)
 - web-fetch = read a specific URL (render in browser)
+- web-form-submit = fill out and submit forms on websites (reservations, bookings, enquiries)
 - github-read = read a file from a GitHub repo
-- phone-call = make a phone call
+- phone-call = make a phone call — LAST RESORT, only when no online form is available
 - NEVER use github-search for general web searches
 - NEVER use web-search when the user asks about GitHub specifically
+- When making a reservation or booking: ALWAYS try web-form-submit FIRST. Only use phone-call if the website has no form or the form fails.
 - If a tool returns an error, tell the user clearly what went wrong
 
 ## YOUR LIMITATIONS
 - You CANNOT read or write files on the user's machine
 - You CANNOT execute code
 - You CANNOT send emails or messages
-- You CAN search the web, read web pages, search/read GitHub, and make phone calls
+- You CAN search the web, read web pages, submit forms on websites, search/read GitHub, and make phone calls
+- When asked to make a reservation or booking, try web-form-submit first, phone-call as last resort
 - If the user asks for something you can't do, say so honestly
 
 Be proactive, concise, and helpful. You help with research, writing, analysis, coding questions, planning, phone calls — anything within your capabilities.`
@@ -75,6 +84,7 @@ Be proactive, concise, and helpful. You help with research, writing, analysis, c
 const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'web-search', description: 'Search the INTERNET (general web) for current information. Use this for general web searches, NOT for GitHub code search. Returns titles, URLs, and snippets.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'web-fetch', description: 'Read the full content of a specific web page URL by rendering it in a real browser. Use AFTER web-search to dig deeper into a result.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The full URL to fetch (e.g. https://example.com/page)' } }, required: ['url'] } } },
+  { type: 'function' as const, function: { name: 'web-form-submit', description: 'Fill out and submit a form on a web page (e.g. reservation form, contact form, booking form). Use this to make reservations or bookings online BEFORE resorting to a phone call. Returns the result/confirmation page content.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The URL of the page containing the form' }, fields: { type: 'array', description: 'Form fields to fill in', items: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector for the input field (e.g. #name, input[name=\"email\"], .date-picker)' }, value: { type: 'string', description: 'Value to enter' }, type: { type: 'string', description: 'Field type: input, select, textarea, or checkbox', enum: ['input', 'select', 'textarea', 'checkbox'] } }, required: ['selector', 'value'] } }, submitSelector: { type: 'string', description: 'CSS selector for the submit button (e.g. button[type=\"submit\"], .book-now, #reserve-btn). If omitted, presses Enter.' }, waitAfter: { type: 'number', description: 'Milliseconds to wait after submit for JS rendering (default: 2000)' } }, required: ['url', 'fields'] } } },
   { type: 'function' as const, function: { name: 'github-search', description: 'Search GITHUB ONLY — for code, issues, and PRs across GitHub repositories. Do NOT use this for general web searches. Use web-search for general internet searches.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'GitHub search query (supports GitHub search syntax)' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'github-read', description: 'Read a specific FILE from a GitHub repository. Requires owner, repo name, and file path.', parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' } }, required: ['owner', 'repo', 'path'] } } },
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound PHONE CALL. An AI assistant will speak on your behalf to the given number. Use for making reservations, enquiries, appointments by phone.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish — be specific' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
@@ -123,6 +133,16 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       const url = args.url as string
       const content = await webFetch(url)
       return content
+    }
+    case 'web-form-submit': {
+      const result = await webFormSubmit({
+        url: args.url as string,
+        fields: (args.fields as { selector: string; value: string; type?: 'input' | 'select' | 'textarea' | 'checkbox' }[]) || [],
+        submitSelector: args.submitSelector as string | undefined,
+        waitAfter: (args.waitAfter as number) || 2000,
+      })
+      console.log('[web-form-submit] result:', result.slice(0, 200))
+      return result
     }
     case 'phone-call': {
       if (!phoneEnabled) return JSON.stringify({ error: 'Phone calls require a Pro or Unlimited plan.' })
