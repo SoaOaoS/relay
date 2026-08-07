@@ -78,7 +78,7 @@ export async function webFormSubmit(params: {
                 if (input) return '#' + forAttr
               }
               // Maybe the input is inside the label
-              const input = l.querySelector('input, textarea, select')
+              const input = l.querySelector('input, textarea, select') as HTMLInputElement | null
               if (input) {
                 if (input.id) return '#' + input.id
                 if (input.name) return `[name="${input.name}"]`
@@ -89,15 +89,15 @@ export async function webFormSubmit(params: {
           const inputs = document.querySelectorAll('input, textarea, select')
           for (const inp of inputs) {
             const el = inp as HTMLInputElement
-            const placeholder = el.placeholder?.toLowerCase() || ''
+            const placeholder = (el as HTMLInputElement).placeholder?.toLowerCase() || ''
             const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || ''
-            const name = el.name?.toLowerCase() || ''
+            const name = (el as HTMLInputElement).name?.toLowerCase() || ''
             const title = el.title?.toLowerCase() || ''
             const target = label.toLowerCase()
             if (placeholder.includes(target) || ariaLabel.includes(target) || name.includes(target) || title.includes(target)) {
-              if (el.id) return '#' + el.id
-              if (el.name) return `[name="${el.name}"]`
-              return el.tagName.toLowerCase()
+            if (el.id) return '#' + el.id
+            if ((el as HTMLInputElement).name) return `[name="${(el as HTMLInputElement).name}"]`
+            return el.tagName.toLowerCase()
             }
           }
           // 3. Try data-testid or data-field
@@ -107,7 +107,7 @@ export async function webFormSubmit(params: {
             return `[data-testid="${testid.getAttribute('data-testid')}"]`
           }
           return null
-        }, field.label)
+        }, field.label) || undefined
       }
 
       if (!selector) {
@@ -151,7 +151,7 @@ export async function webFormSubmit(params: {
 
     // Find and click submit button
     let submitSel = params.submitSelector
-    if (!submitSel && params.submitText) {
+      if (!submitSel && params.submitText) {
       submitSel = await page.evaluate((text: string) => {
         const target = text.toLowerCase()
         const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"], [role="button"]')
@@ -164,7 +164,7 @@ export async function webFormSubmit(params: {
           }
         }
         return null
-      }, params.submitText)
+      }, params.submitText) || undefined
     }
 
     if (submitSel) {
