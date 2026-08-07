@@ -57,18 +57,48 @@ export async function browserAction(params: {
         if (!params.selector && !params.text) return JSON.stringify({ error: 'selector or text required for click' })
         let sel = params.selector
         if (!sel && params.text) {
-          // Find element by text content
+          // Find element by text content — prefer exact match, then starts-with, then includes
           sel = await page.evaluate((text: string) => {
-            const target = text.toLowerCase()
-            // Try buttons, links, and clickable elements
-            const els = document.querySelectorAll('button, a, [role="button"], [role="tab"], [onclick], input[type="submit"], [class*="btn"], [class*="button"]')
-            for (const el of els) {
+            const target = text.toLowerCase().trim()
+            const els = document.querySelectorAll('button, a, [role="button"], [role="tab"], [role="option"], [onclick], input[type="submit"], [class*="btn"], [class*="button"], [class*="time"], [class*="guest"], [class*="slot"]')
+            // Sort by visibility and specificity
+            const visible = Array.from(els).filter(el => (el as HTMLElement).offsetParent !== null)
+            // 1. Exact text match
+            for (const el of visible) {
               const content = (el.textContent || el.getAttribute('value') || '').toLowerCase().trim()
-              if (content.includes(target)) {
+              if (content === target) {
                 if (el.id) return '#' + CSS.escape(el.id)
-                // Build a more specific selector
                 const tag = el.tagName.toLowerCase()
                 const cls = el.className?.split(' ')[0]
+                if (cls) return `${tag}.${CSS.escape(cls)}`
+                // Use nth-of-type among siblings
+                const parent = el.parentElement
+                if (parent) {
+                  const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName)
+                  const index = siblings.indexOf(el) + 1
+                  return `${tag}:nth-of-type(${index})`
+                }
+                return tag
+              }
+            }
+            // 2. Text starts with target
+            for (const el of visible) {
+              const content = (el.textContent || '').toLowerCase().trim()
+              if (content.startsWith(target) && content.length < target.length + 20) {
+                if (el.id) return '#' + CSS.escape(el.id)
+                const cls = el.className?.split(' ')[0]
+                const tag = el.tagName.toLowerCase()
+                if (cls) return `${tag}.${CSS.escape(cls)}`
+                return tag
+              }
+            }
+            // 3. Includes (but only if short text)
+            for (const el of visible) {
+              const content = (el.textContent || '').toLowerCase().trim()
+              if (content.includes(target) && content.length < 50) {
+                if (el.id) return '#' + CSS.escape(el.id)
+                const cls = el.className?.split(' ')[0]
+                const tag = el.tagName.toLowerCase()
                 if (cls) return `${tag}.${CSS.escape(cls)}`
                 return tag
               }
@@ -124,30 +154,49 @@ export async function browserAction(params: {
       }
 
       case 'screenshot': {
-        // Return a description of what's visible — list all interactive elements
+        // Return a concise summary of what's visible — list interactive elements compactly
         const interactive = await page.evaluate(() => {
-          const elements: { tag: string; text: string; id: string; name: string; type: string; placeholder: string; role: string; className: string; href: string; value: string; visible: boolean }[] = []
-          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="combobox"], [role="listbox"], [role="datepicker"], [onclick], label')
+          const elements: { tag: string; text: string; selector: string; type: string }[] = []
+          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="combobox"], [role="listbox"], [role="option"], [onclick], label')
           els.forEach(el => {
             const e = el as HTMLElement
-            if (e.offsetParent === null) return // skip hidden
+            if (e.offsetParent === null) return
+            const text = (e.textContent || '').trim().slice(0, 60)
+            const tag = e.tagName.toLowerCase()
+            // Build the most specific selector we can
+            let selector = ''
+            if (e.id) selector = '#' + e.id
+            else if ((e as HTMLInputElement).name) selector = `${tag}[name="${(e as HTMLInputElement).name}"]`
+            else if (e.getAttribute('data-testid')) selector = `[data-testid="${e.getAttribute('data-testid')}"]`
+            else if (e.className && typeof e.className === 'string') {
+              const firstClass = e.className.split(' ')[0]
+              if (firstClass) selector = `${tag}.${firstClass}`
+            }
+            if (!selector) selector = tag
             elements.push({
-              tag: e.tagName.toLowerCase(),
-              text: (e.textContent || '').trim().slice(0, 100),
-              id: e.id || '',
-              name: (e as HTMLInputElement).name || '',
+              tag,
+              text: text || (e as HTMLInputElement).placeholder || (e as HTMLInputElement).value || '',
+              selector,
               type: (e as HTMLInputElement).type || '',
-              placeholder: (e as HTMLInputElement).placeholder || '',
-              role: e.getAttribute('role') || '',
-              className: e.className?.slice(0, 60) || '',
-              href: (e as HTMLAnchorElement).href || '',
-              value: (e as HTMLInputElement).value || '',
-              visible: true,
             })
           })
-          return elements.slice(0, 50)
+          // Deduplicate by selector
+          const seen = new Set<string>()
+          return elements.filter(e => {
+            if (seen.has(e.selector)) return false
+            seen.add(e.selector)
+            return true
+          }).slice(0, 30)
         })
-        return JSON.stringify({ interactive, url: page.url(), title: await page.title() })
+        // Also get visible text content (short) so the LLM understands context
+        const visibleText = await page.evaluate(() => {
+          const body = document.body
+          if (!body) return ''
+          const clone = body.cloneNode(true) as HTMLElement
+          clone.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove())
+          return clone.innerText?.slice(0, 1500) || ''
+        })
+        return JSON.stringify({ pageText: visibleText, interactive, url: page.url() })
       }
 
       case 'press_key': {
