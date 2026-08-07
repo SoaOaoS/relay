@@ -29,7 +29,7 @@ async function getBrowser(): Promise<Browser> {
 
 // Execute a series of browser actions in sequence — like a human driving a browser
 export async function browserAction(params: {
-  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close'
+  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval'
   selector?: string // CSS selector
   text?: string // Text to type, or button text to find for click
   value?: string // Value for select dropdown
@@ -56,12 +56,18 @@ export async function browserAction(params: {
       case 'click': {
         if (!params.selector && !params.text) return JSON.stringify({ error: 'selector or text required for click' })
         let sel = params.selector
+
+        // Handle "text=Something" pseudo-selector
+        if (sel && sel.startsWith('text=')) {
+          params.text = sel.slice(5)
+          sel = undefined
+        }
+
         if (!sel && params.text) {
           // Find element by text content — prefer exact match, then starts-with, then includes
           sel = await page.evaluate((text: string) => {
             const target = text.toLowerCase().trim()
-            const els = document.querySelectorAll('button, a, [role="button"], [role="tab"], [role="option"], [onclick], input[type="submit"], [class*="btn"], [class*="button"], [class*="time"], [class*="guest"], [class*="slot"]')
-            // Sort by visibility and specificity
+            const els = document.querySelectorAll('button, a, [role="button"], [role="tab"], [role="option"], [role="listitem"], [onclick], input[type="submit"], [class*="btn"], [class*="button"], [class*="time"], [class*="guest"], [class*="slot"], [class*="item"], div[class*="select"], span[class*="select"]')
             const visible = Array.from(els).filter(el => (el as HTMLElement).offsetParent !== null)
             // 1. Exact text match
             for (const el of visible) {
@@ -71,7 +77,6 @@ export async function browserAction(params: {
                 const tag = el.tagName.toLowerCase()
                 const cls = el.className?.split(' ')[0]
                 if (cls) return `${tag}.${CSS.escape(cls)}`
-                // Use nth-of-type among siblings
                 const parent = el.parentElement
                 if (parent) {
                   const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName)
@@ -154,49 +159,49 @@ export async function browserAction(params: {
       }
 
       case 'screenshot': {
-        // Return a concise summary of what's visible — list interactive elements compactly
-        const interactive = await page.evaluate(() => {
-          const elements: { tag: string; text: string; selector: string; type: string }[] = []
-          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="combobox"], [role="listbox"], [role="option"], [onclick], label')
+        // Return a concise summary — focus on interactive elements + short context
+        const result = await page.evaluate(() => {
+          // Get interactive elements with their text + a unique selector
+          const elements: { tag: string; text: string; selector: string; type: string; value: string }[] = []
+          const els = document.querySelectorAll('button, a, input, textarea, select, [role="button"], [role="tab"], [role="combobox"], [role="listbox"], [role="option"], [role="listitem"], [onclick], label')
           els.forEach(el => {
             const e = el as HTMLElement
             if (e.offsetParent === null) return
-            const text = (e.textContent || '').trim().slice(0, 60)
+            const text = (e.textContent || '').trim().slice(0, 40)
             const tag = e.tagName.toLowerCase()
-            // Build the most specific selector we can
             let selector = ''
-            if (e.id) selector = '#' + e.id
+            if (e.id) selector = '#' + CSS.escape(e.id)
             else if ((e as HTMLInputElement).name) selector = `${tag}[name="${(e as HTMLInputElement).name}"]`
             else if (e.getAttribute('data-testid')) selector = `[data-testid="${e.getAttribute('data-testid')}"]`
             else if (e.className && typeof e.className === 'string') {
               const firstClass = e.className.split(' ')[0]
-              if (firstClass) selector = `${tag}.${firstClass}`
+              if (firstClass) selector = `${tag}.${CSS.escape(firstClass)}`
             }
             if (!selector) selector = tag
             elements.push({
               tag,
-              text: text || (e as HTMLInputElement).placeholder || (e as HTMLInputElement).value || '',
+              text: text || (e as HTMLInputElement).placeholder || '',
               selector,
               type: (e as HTMLInputElement).type || '',
+              value: (e as HTMLInputElement).value || '',
             })
           })
-          // Deduplicate by selector
+          // Deduplicate
           const seen = new Set<string>()
-          return elements.filter(e => {
-            if (seen.has(e.selector)) return false
-            seen.add(e.selector)
+          const deduped = elements.filter(e => {
+            const key = e.selector + e.text
+            if (seen.has(key)) return false
+            seen.add(key)
             return true
-          }).slice(0, 30)
+          }).slice(0, 40)
+
+          // Get short page text — just enough for context
+          const body = document.body?.innerText || ''
+          const pageText = body.replace(/\s+/g, ' ').trim().slice(0, 2000)
+
+          return { pageText, interactive: deduped }
         })
-        // Also get visible text content (short) so the LLM understands context
-        const visibleText = await page.evaluate(() => {
-          const body = document.body
-          if (!body) return ''
-          const clone = body.cloneNode(true) as HTMLElement
-          clone.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove())
-          return clone.innerText?.slice(0, 1500) || ''
-        })
-        return JSON.stringify({ pageText: visibleText, interactive, url: page.url() })
+        return JSON.stringify({ ...result, url: page.url() })
       }
 
       case 'press_key': {
@@ -226,6 +231,18 @@ export async function browserAction(params: {
           browser = null
         }
         return JSON.stringify({ ok: true, closed: true })
+      }
+
+      case 'eval': {
+        // Run custom JavaScript in the page — for complex widget interactions
+        // that click/type/select can't handle
+        if (!params.text) return JSON.stringify({ error: 'JavaScript code required in text field for eval' })
+        try {
+          const result = await page.evaluate(params.text)
+          return JSON.stringify({ ok: true, result: typeof result === 'string' ? result : JSON.stringify(result) })
+        } catch (e) {
+          return JSON.stringify({ error: `Eval failed: ${e instanceof Error ? e.message : String(e)}` })
+        }
       }
 
       default:
