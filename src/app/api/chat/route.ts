@@ -13,7 +13,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || ''
 const WORKSPACE_ROOT = resolve(process.env.WORKSPACE_ROOT || process.cwd())
-const MAX_TOOL_ROUNDS = 10
+const MAX_TOOL_ROUNDS = 30
 
 const SYSTEM_PROMPT = `You are Relay, a personal AI assistant that gets things done — not just chat.
 
@@ -371,7 +371,22 @@ export async function POST(req: NextRequest) {
             break
           }
 
-          if (!finalResponse) finalResponse = 'I reached the tool-call limit without a final answer.'
+          if (!finalResponse) {
+            // Force a final answer — no tools, just synthesize what we have
+            ollamaMessages.push({ role: 'user', content: 'You have used all your tool calls. Based on everything you\'ve gathered so far, give me your best, most complete answer now. Do not attempt to call any more tools.' })
+            try {
+              const forceRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(OLLAMA_API_KEY ? { 'Authorization': `Bearer ${OLLAMA_API_KEY}` } : {}) },
+                body: JSON.stringify({ model: OLLAMA_MODEL, messages: ollamaMessages, stream: false }),
+              })
+              if (forceRes.ok) {
+                const forceText = await forceRes.text()
+                try { const forceData = JSON.parse(forceText); finalResponse = forceData.message?.content || forceData.choices?.[0]?.message?.content || '' } catch { finalResponse = forceText.slice(0, 5000) }
+              }
+            } catch { /* ignore */ }
+            if (!finalResponse) finalResponse = 'I gathered information but had trouble formulating a final response. Here is what I found so far — please ask me to elaborate on any of it.'
+          }
           await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: finalResponse })
           send({ type: 'done', conversationId: convId, toolCalls: toolCallsLog })
         } catch (e) {
@@ -450,7 +465,21 @@ export async function POST(req: NextRequest) {
       finalResponse = msg.content || 'No response.'
       break
     }
-    if (!finalResponse) finalResponse = 'I reached the tool-call limit without a final answer.'
+    if (!finalResponse) {
+      ollamaMessages.push({ role: 'user', content: 'You have used all your tool calls. Based on everything you\'ve gathered so far, give me your best, most complete answer now. Do not attempt to call any more tools.' })
+      try {
+        const forceRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(OLLAMA_API_KEY ? { 'Authorization': `Bearer ${OLLAMA_API_KEY}` } : {}) },
+          body: JSON.stringify({ model: OLLAMA_MODEL, messages: ollamaMessages, stream: false }),
+        })
+        if (forceRes.ok) {
+          const forceText = await forceRes.text()
+          try { const forceData = JSON.parse(forceText); finalResponse = forceData.message?.content || forceData.choices?.[0]?.message?.content || '' } catch { finalResponse = forceText.slice(0, 5000) }
+        }
+      } catch { /* ignore */ }
+      if (!finalResponse) finalResponse = 'I gathered information but had trouble formulating a final response. Here is what I found so far — please ask me to elaborate on any of it.'
+    }
     await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: finalResponse })
     if (mcpClient) await mcpClient.cleanup()
     return Response.json({ response: finalResponse, conversationId: convId, toolCalls: toolCallsLog })
