@@ -305,11 +305,18 @@ export async function POST(req: NextRequest) {
                 send({ type: 'tool_start', tool: toolName, round: rounds })
               }
               // Execute all tool calls in parallel
-              const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string }; id?: string; name?: string }) => {
+              const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string | Record<string, unknown> }; id?: string; name?: string }) => {
                 const toolName = tc.function?.name || tc.name || ''
                 let toolArgs: Record<string, unknown> = {}
-                try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { /* empty */ }
+                const rawArgs = tc.function?.arguments
+                if (typeof rawArgs === 'string') {
+                  try { toolArgs = JSON.parse(rawArgs) } catch { /* empty */ }
+                } else if (typeof rawArgs === 'object' && rawArgs !== null) {
+                  toolArgs = rawArgs as Record<string, unknown>
+                }
+                console.log('[tool-call]', toolName, JSON.stringify(toolArgs))
                 const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed, mcpClient)
+                console.log('[tool-result]', toolName, result.slice(0, 200))
                 toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
                 send({ type: 'tool_done', tool: toolName, round: rounds })
                 return { tc, result, toolName }
@@ -451,10 +458,15 @@ export async function POST(req: NextRequest) {
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         ollamaMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
         // Execute tool calls in parallel
-        const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string }; id?: string; name?: string }) => {
+        const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string | Record<string, unknown> }; id?: string; name?: string }) => {
           const toolName = tc.function?.name || tc.name || ''
           let toolArgs: Record<string, unknown> = {}
-          try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { /* empty */ }
+          const rawArgs = tc.function?.arguments
+          if (typeof rawArgs === 'string') {
+            try { toolArgs = JSON.parse(rawArgs) } catch { /* empty */ }
+          } else if (typeof rawArgs === 'object' && rawArgs !== null) {
+            toolArgs = rawArgs as Record<string, unknown>
+          }
           const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed)
           toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
           return { tc, result, toolName }
