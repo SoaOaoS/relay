@@ -5,7 +5,7 @@ import { buildCredEnv } from '@/lib/mcp-providers'
 import { canUsePhoneCalls } from '@/lib/stripe'
 import { getTemplate } from '@/lib/call-templates'
 import { connectMCPClient, mcpToolsToDefinitions, type UserMCPServer, type MCPClientResult } from '@/lib/mcp-client'
-import { webSearch, webFetch, webFormSubmit } from '@/lib/browser-search'
+import { webSearch, webFetch, browserAction } from '@/lib/browser-search'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
@@ -39,15 +39,18 @@ Use this to read a specific file from a GitHub repository.
 - Use for: "read the README of owner/repo", "show me the package.json of X"
 - Requires: owner, repo, and file path
 
-### web-form-submit — for filling out and submitting FORMS on websites
-Use this to make reservations, bookings, or enquiries via online forms. This fills in fields and clicks submit in a real browser.
-- Use for: "book a table at restaurant X", "make a reservation", "fill out the contact form"
-- Requires: URL of the page, array of fields (selector + value), optional submit button selector
-- ALWAYS try this BEFORE phone-call when a website has an online form
+### browser-action — control a REAL BROWSER step by step
+Use this to interact with websites like a human: navigate to pages, click buttons, type into fields, read the page, and see what's on screen. This is how you fill out forms, make reservations, and handle multi-step booking widgets.
+- Use for: "make a reservation", "book a table", "fill out this form", "click the button"
+- WORKFLOW: navigate → screenshot (see what's on the page) → click/type/select → wait → screenshot again → repeat
+- screenshot returns ALL visible buttons, inputs, links, and their selectors — use this to understand the page
+- The browser stays open between calls — you can chain actions
+- ALWAYS call screenshot first to see what's available before clicking
+- ALWAYS call close when done to free the browser
 
 ### phone-call — for making AI PHONE CALLS (LAST RESORT)
-Use this ONLY when online forms are not available or have failed. An AI assistant will speak on your behalf.
-- Use for: "call this number", "phone this restaurant" — but ONLY after trying web-form-submit first
+Use this ONLY when browser-action can't complete the task (e.g. website has no booking form, or form is broken). An AI assistant will speak on your behalf.
+- Use for: "call this number", "phone this restaurant" — but ONLY after trying browser-action first
 - Requires: phone number in E.164 format (+countrycode...)
 - The assistant handles the conversation — you just provide the context
 
@@ -62,21 +65,20 @@ Use this ONLY when online forms are not available or have failed. An AI assistan
 ## CRITICAL RULES
 - web-search = search the INTERNET (general web)
 - github-search = search GITHUB ONLY (code, repos, issues)
-- web-fetch = read a specific URL (render in browser)
-- web-form-submit = fill out and submit forms on websites (reservations, bookings, enquiries)
+- web-fetch = read a specific URL (one-shot, returns text)
+- browser-action = control a browser step by step (navigate, click, type, screenshot) — use for forms and bookings
 - github-read = read a file from a GitHub repo
-- phone-call = make a phone call — LAST RESORT, only when no online form is available
+- phone-call = make a phone call — LAST RESORT, only when browser-action fails
 - NEVER use github-search for general web searches
-- NEVER use web-search when the user asks about GitHub specifically
-- When making a reservation or booking: ALWAYS try web-form-submit FIRST. Only use phone-call if the website has no form or the form fails.
-- If a tool returns an error, tell the user clearly what went wrong
+- When making a reservation or booking: use browser-action to navigate to the website, screenshot to see the form, fill it in step by step, and submit. Only use phone-call if there's no form or it fails.
+- For browser-action: ALWAYS call screenshot FIRST to understand the page before interacting with it
 
 ## YOUR LIMITATIONS
 - You CANNOT read or write files on the user's machine
 - You CANNOT execute code
 - You CANNOT send emails or messages
-- You CAN search the web, read web pages, submit forms on websites, search/read GitHub, and make phone calls
-- When asked to make a reservation or booking, try web-form-submit first, phone-call as last resort
+- You CAN search the web, read web pages, control a browser (fill forms, make bookings), search/read GitHub, and make phone calls
+- When asked to make a reservation or booking, use browser-action to drive the website form. Phone-call is last resort only
 - If the user asks for something you can't do, say so honestly
 
 Be proactive, concise, and helpful. You help with research, writing, analysis, coding questions, planning, phone calls — anything within your capabilities.`
@@ -84,7 +86,7 @@ Be proactive, concise, and helpful. You help with research, writing, analysis, c
 const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'web-search', description: 'Search the INTERNET (general web) for current information. Use this for general web searches, NOT for GitHub code search. Returns titles, URLs, and snippets.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'web-fetch', description: 'Read the full content of a specific web page URL by rendering it in a real browser. Use AFTER web-search to dig deeper into a result.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The full URL to fetch (e.g. https://example.com/page)' } }, required: ['url'] } } },
-  { type: 'function' as const, function: { name: 'web-form-submit', description: 'Fill out and submit a form on a web page (e.g. reservation form, contact form, booking form). Use this to make reservations or bookings online BEFORE resorting to a phone call. Returns the result/confirmation page content. You can specify fields by CSS selector OR by label text — the tool will try to find the input automatically.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The URL of the page containing the form' }, fields: { type: 'array', description: 'Form fields to fill in. Either provide a CSS selector OR a label (the tool will find the input by label text, placeholder, aria-label, or name).', items: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector for the field (e.g. #name, input[name=\"email\"]). Optional if label is provided.' }, label: { type: 'string', description: 'Label or placeholder text to find the field (e.g. \"name\", \"email\", \"phone\", \"date\", \"time\", \"guests\", \"people\"). Optional if selector is provided.' }, value: { type: 'string', description: 'Value to enter' }, type: { type: 'string', description: 'Field type: input, select, textarea, or checkbox', enum: ['input', 'select', 'textarea', 'checkbox'] } }, required: ['value'] } }, submitSelector: { type: 'string', description: 'CSS selector for the submit button. Optional.' }, submitText: { type: 'string', description: 'Text on the submit button to find it (e.g. \"Book now\", \"Reserve\", \"Submit\", \"Continue\"). Optional.' }, waitAfter: { type: 'number', description: 'Milliseconds to wait after submit for JS rendering (default: 3000)' } }, required: ['url', 'fields'] } } },
+  { type: 'function' as const, function: { name: 'browser-action', description: 'Control a real browser step by step. Actions: navigate (open URL), click (by selector or button text), type (fill input), select (dropdown), wait (pause), read (get page text), screenshot (list all visible buttons/inputs/links), press_key, scroll, exists (check selector), close. Use screenshot FIRST to see what is on the page, then click/type/select to interact. Chain multiple calls to fill multi-step forms and booking widgets.', parameters: { type: 'object', properties: { action: { type: 'string', description: 'What to do: navigate, click, type, select, wait, read, screenshot, press_key, scroll, exists, close', enum: ['navigate', 'click', 'type', 'select', 'wait', 'read', 'screenshot', 'press_key', 'scroll', 'exists', 'close'] }, selector: { type: 'string', description: 'CSS selector (for click, type, select, exists)' }, text: { type: 'string', description: 'Text to type (for type) or button text to find (for click)' }, value: { type: 'string', description: 'Value for select dropdown' }, url: { type: 'string', description: 'URL to navigate to' }, key: { type: 'string', description: 'Key to press: Enter, Tab, Escape, ArrowDown, etc.' }, delay: { type: 'number', description: 'Wait time in ms (for wait action)' }, steps: { type: 'number', description: 'Scroll pixels (for scroll action)' } }, required: ['action'] } } },
   { type: 'function' as const, function: { name: 'github-search', description: 'Search GITHUB ONLY — for code, issues, and PRs across GitHub repositories. Do NOT use this for general web searches. Use web-search for general internet searches.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'GitHub search query (supports GitHub search syntax)' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'github-read', description: 'Read a specific FILE from a GitHub repository. Requires owner, repo name, and file path.', parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' } }, required: ['owner', 'repo', 'path'] } } },
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound PHONE CALL. An AI assistant will speak on your behalf to the given number. Use for making reservations, enquiries, appointments by phone.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish — be specific' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
@@ -134,15 +136,18 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       const content = await webFetch(url)
       return content
     }
-    case 'web-form-submit': {
-      const result = await webFormSubmit({
-        url: args.url as string,
-        fields: (args.fields as { selector?: string; label?: string; value: string; type?: 'input' | 'select' | 'textarea' | 'checkbox' }[]) || [],
-        submitSelector: args.submitSelector as string | undefined,
-        submitText: args.submitText as string | undefined,
-        waitAfter: (args.waitAfter as number) || 3000,
+    case 'browser-action': {
+      const result = await browserAction({
+        action: args.action as 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close',
+        selector: args.selector as string | undefined,
+        text: args.text as string | undefined,
+        value: args.value as string | undefined,
+        url: args.url as string | undefined,
+        key: args.key as string | undefined,
+        delay: args.delay as number | undefined,
+        steps: args.steps as number | undefined,
       })
-      console.log('[web-form-submit] result:', result.slice(0, 300))
+      console.log('[browser-action]', args.action, result.slice(0, 200))
       return result
     }
     case 'phone-call': {
