@@ -68,3 +68,25 @@ body {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+.tool-card {
+  animation: toolSlideIn 0.3s ease-out;
+}
+
+@keyframes toolSlideIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.stream-cursor::after {
+  content: '▊';
+  display: inline-block;
+  animation: blink 0.8s steps(2) infinite;
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}

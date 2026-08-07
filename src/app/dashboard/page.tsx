@@ -105,12 +105,31 @@ export default function Dashboard() {
     if (data) setCalls(data)
   }
 
+  // Track if we have pending calls so we can poll for completion reports
+  const [pendingCall, setPendingCall] = useState<string | null>(null)
+  const [streamingContent, setStreamingContent] = useState('')
+  const [activeToolCalls, setActiveToolCalls] = useState<{ tool: string; round: number }[]>([])
+
   useEffect(() => {
     if (!user || !callsOpen) return
     loadCalls(user.id)
     const interval = setInterval(() => loadCalls(user.id), 10000)
     return () => clearInterval(interval)
   }, [user, callsOpen])
+
+  // Poll for new messages when a call is pending (the webhook pushes a report message)
+  useEffect(() => {
+    if (!pendingCall || !activeConv) return
+    const interval = setInterval(async () => {
+      const { data: call } = await supabase.from('calls').select('status').eq('call_id', pendingCall).single()
+      if (call?.status && call.status !== 'initiated') {
+        // Call finished — reload messages to pick up the webhook report
+        setPendingCall(null)
+        if (activeConv) loadMessages(activeConv)
+      }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [pendingCall, activeConv])
 
   function switchConversation(convId: string) {
     setActiveConv(convId)
@@ -128,6 +147,8 @@ export default function Dashboard() {
     const userMsg = input.trim()
     setInput('')
     setSending(true)
+    setStreamingContent('')
+    setActiveToolCalls([])
     setMessages(prev => [...prev, { role: 'user', content: userMsg }])
 
     try {
@@ -139,18 +160,60 @@ export default function Dashboard() {
           conversationId: activeConv,
           tools: Array.from(enabledTools),
           messages: messages.map(m => ({ role: m.role, content: m.content })),
+          stream: true,
         }),
       })
-      const data = await res.json()
-      setMessages(prev => [...prev, { role: 'assistant', content: data.response, toolCalls: data.toolCalls }])
-      if (!activeConv && data.conversationId) {
-        setActiveConv(data.conversationId)
-        setConversations(prev => [{ id: data.conversationId, title: userMsg.slice(0, 50), created_at: new Date().toISOString() }, ...prev])
+
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}))
+        setMessages(prev => [...prev, { role: 'assistant', content: data.error || data.response || 'Something went wrong.' }])
+        setSending(false)
+        return
       }
-      if (profile) setProfile({ ...profile, messages_used: profile.messages_used + 1 })
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let accumulated = ''
+      let convId: string | null = null
+      const toolCalls: { name: string; result: string }[] = []
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'conversation' && data.conversationId) convId = data.conversationId
+            if (data.type === 'tool_start') setActiveToolCalls(prev => [...prev, { tool: data.tool, round: data.round }])
+            if (data.type === 'tool_done') {
+              setActiveToolCalls(prev => prev.filter(t => !(t.tool === data.tool && t.round === data.round)))
+              toolCalls.push({ name: data.tool, result: `Executed ${data.tool}` })
+            }
+            if (data.type === 'token') { accumulated += data.content; setStreamingContent(accumulated) }
+            if (data.type === 'done') {
+              setMessages(prev => [...prev, { role: 'assistant', content: accumulated || data.response || '', toolCalls }])
+              if (convId && !activeConv) {
+                setActiveConv(convId)
+                setConversations(prev => [{ id: convId!, title: userMsg.slice(0, 50), created_at: new Date().toISOString() }, ...prev])
+              }
+              if (profile) setProfile({ ...profile, messages_used: profile.messages_used + 1 })
+            }
+            if (data.type === 'error') {
+              setMessages(prev => [...prev, { role: 'assistant', content: data.error || 'Something went wrong.' }])
+            }
+          } catch { /* skip */ }
+        }
+      }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }])
     }
+    setStreamingContent('')
+    setActiveToolCalls([])
     setSending(false)
   }
 
@@ -181,6 +244,16 @@ export default function Dashboard() {
     if (!phoneNumber.trim() || !selectedTemplate || !requiredFieldsFilled()) return
     setPhoneCalling(true)
     try {
+      // Ensure we have a conversation to link the call report to
+      let convId = activeConv
+      if (!convId && user) {
+        const { data: conv } = await supabase.from('conversations').insert({ user_id: user.id, title: `📞 ${selectedTemplate.label} — ${phoneNumber}` }).select().single()
+        convId = conv?.id || null
+        if (convId) {
+          setActiveConv(convId)
+          setConversations(prev => [{ id: convId!, title: `📞 ${selectedTemplate.label} — ${phoneNumber}`, created_at: new Date().toISOString() }, ...prev])
+        }
+      }
       const res = await fetch('/api/vapi/call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -188,7 +261,7 @@ export default function Dashboard() {
           number: phoneNumber,
           templateId: selectedTemplate.id,
           templateValues,
-          conversationId: activeConv,
+          conversationId: convId,
           context: selectedTemplate.buildContext(templateValues),
         }),
       })
@@ -200,6 +273,7 @@ export default function Dashboard() {
       } else {
         const tplLabel = data.template || selectedTemplate.label
         setMessages(prev => [...prev, { role: 'assistant', content: `📞 **${tplLabel} call placed to ${phoneNumber}**\n\nCall ID: \`${data.callId}\`\n\nThe assistant is on the line — I'll report back when the call completes with a summary and transcript.` }])
+        setPendingCall(data.callId)
         setPhoneModal(false)
       }
       setPhoneNumber('')
@@ -317,16 +391,29 @@ export default function Dashboard() {
             <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-6">
               {loadingMessages ? (
                 <div className="flex items-center justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-zinc-500" /></div>
-              ) : messages.length === 0 ? (
+              ) : messages.length === 0 && !sending ? (
                 <div className="text-center py-20 fade-in">
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center mx-auto mb-5">
                     <Bot className="w-7 h-7 text-white" />
                   </div>
                   <h2 className="text-xl font-semibold mb-2">What can I do for you?</h2>
                   <p className="text-zinc-500 text-sm max-w-sm mx-auto">Ask me to research, write, analyze, search the web, make a call, or anything else.</p>
+                  <div className="mt-8 flex flex-wrap gap-2 justify-center max-w-md mx-auto">
+                    {[
+                      { icon: '🔍', label: 'Search the web', prompt: 'Search for the latest news about AI agents' },
+                      { icon: '📞', label: 'Make a call', prompt: 'Call a restaurant to book a table' },
+                      { icon: '💻', label: 'Search GitHub', prompt: 'Find popular Next.js repositories on GitHub' },
+                      { icon: '📄', label: 'Read & summarize', prompt: 'Search for best practices for API design and summarize' },
+                    ].map((s) => (
+                      <button key={s.label} onClick={() => { setInput(s.prompt) }} className="px-3 py-2 rounded-xl border border-zinc-800 bg-[#111113] hover:border-indigo-500/30 hover:bg-indigo-500/5 transition text-xs text-zinc-400 hover:text-white flex items-center gap-2">
+                        <span>{s.icon}</span> {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : (
-                messages.map((m, i) => (
+                <>
+                {messages.map((m, i) => (
                   <div key={m.id || i} className={cn('flex gap-3 fade-in', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                     {m.role === 'assistant' && (
                       <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0 mt-0.5">
@@ -346,18 +433,48 @@ export default function Dashboard() {
                       )}
                     </div>
                   </div>
-                ))
+                ))}
+                </>
               )}
-              {sending && (
+              {/* Active tool call cards — animated */}
+              {activeToolCalls.length > 0 && (
+                <div className="flex gap-3 justify-start fade-in">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0 mt-0.5">
+                    <Zap className="w-4 h-4 text-white" fill="white" />
+                  </div>
+                  <div className="space-y-2">
+                    {activeToolCalls.map((tc, i) => (
+                      <div key={i} className="flex items-center gap-2.5 bg-[#18181b] border border-indigo-500/30 rounded-xl px-4 py-2.5 animate-pulse">
+                        <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                        <span className="text-sm text-zinc-300">Using <span className="text-indigo-400 font-medium">{tc.tool}</span></span>
+                        <span className="text-xs text-zinc-600">round {tc.round}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Streaming response — show tokens as they arrive */}
+              {sending && streamingContent && (
+                <div className="flex gap-3 justify-start fade-in">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0 mt-0.5">
+                    <Zap className="w-4 h-4 text-white" fill="white" />
+                  </div>
+                  <div className="max-w-[75%] rounded-2xl px-4 py-3 chat-message text-sm leading-relaxed bg-[#18181b] text-zinc-100 border border-zinc-800 rounded-bl-md">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
+                  </div>
+                </div>
+              )}
+              {/* Thinking indicator — only when no tokens yet and no tool calls */}
+              {sending && !streamingContent && activeToolCalls.length === 0 && (
                 <div className="flex gap-3 justify-start fade-in">
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
                     <Zap className="w-4 h-4 text-white" fill="white" />
                   </div>
                   <div className="bg-[#18181b] border border-zinc-800 rounded-2xl rounded-bl-md px-4 py-3">
                     <div className="flex gap-1.5">
-                      <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                     </div>
                   </div>
                 </div>

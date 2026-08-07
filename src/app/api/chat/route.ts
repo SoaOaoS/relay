@@ -6,18 +6,19 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import { glob as globAsync } from 'glob'
 import { buildCredEnv } from '@/lib/mcp-providers'
 import { canUsePhoneCalls } from '@/lib/stripe'
+import { getTemplate } from '@/lib/call-templates'
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || ''
-const WORKSPACE_ROOT = resolve(/*turbopackIgnore: true*/ process.env.WORKSPACE_ROOT || process.cwd())
-const MAX_TOOL_ROUNDS = 6
+const WORKSPACE_ROOT = resolve(process.env.WORKSPACE_ROOT || process.cwd())
+const MAX_TOOL_ROUNDS = 10
 
 const SYSTEM_PROMPT = `You are Relay, a personal AI assistant that gets things done — not just chat.
 
-You have access to tools. Use them proactively when the user's request needs real action:
+You have access to tools. Use them proactively and chain them together when a request needs multiple steps:
 - web-search: search the live web for current information
-- web-fetch: read the full content of a web page
+- web-fetch: read the full content of a web page (use after web-search to dig deeper)
 - github-search: find code, issues, PRs across GitHub
 - github-read: read a file from any GitHub repo
 - file-read: read a file from the workspace
@@ -26,30 +27,34 @@ You have access to tools. Use them proactively when the user's request needs rea
 - phone-call: place an AI phone call to a number
 
 How you work:
-1. If a request needs external info or action, call the right tool.
-2. Read the tool result, then continue reasoning or call another tool if needed.
-3. When you have enough information, give a clear, helpful final answer.
-4. Mention which tools you used and what you found, briefly.
+1. Analyse the request. If it needs external info or action, call the right tool(s).
+2. Read tool results, then continue reasoning or call more tools if needed.
+3. You can call multiple tools in one round, and chain rounds up to 10 deep.
+4. When you have enough information, give a clear, helpful final answer.
+5. Briefly mention which tools you used at the end.
+
+Examples of multi-tool chains:
+- "Find the best headphones under $200 and call the store": web-search → web-fetch (read reviews) → phone-call
+- "Check this repo's README and save a summary": github-read → file-write
+- "Search for X and save the results to a file": web-search → file-write
 
 Be proactive, concise, and helpful. You help with research, writing, analysis, coding, planning, calls — anything.`
 
 const TOOL_DEFINITIONS = [
-  { type: 'function' as const, function: { name: 'web-search', description: 'Search the web for current information.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function' as const, function: { name: 'web-fetch', description: 'Fetch the content of a web page URL.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
-  { type: 'function' as const, function: { name: 'github-search', description: 'Search for code across GitHub repositories.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function' as const, function: { name: 'web-search', description: 'Search the web for current information using DuckDuckGo.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } } },
+  { type: 'function' as const, function: { name: 'web-fetch', description: 'Fetch and read the full content of a web page URL.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The URL to fetch' } }, required: ['url'] } } },
+  { type: 'function' as const, function: { name: 'github-search', description: 'Search for code, issues, and PRs across GitHub repositories.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query (supports GitHub search syntax)' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'github-read', description: 'Read a file from a GitHub repository.', parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' } }, required: ['owner', 'repo', 'path'] } } },
   { type: 'function' as const, function: { name: 'file-read', description: 'Read a file from the workspace filesystem.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function' as const, function: { name: 'file-write', description: 'Write content to a file in the workspace.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
   { type: 'function' as const, function: { name: 'file-glob', description: 'Find files in the workspace by glob pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
-  { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call.', parameters: { type: 'object', properties: { number: { type: 'string' }, context: { type: 'string' } }, required: ['number'] } } },
+  { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call. The assistant will speak on your behalf.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
 ]
 
 async function executeTool(userId: string, name: string, args: Record<string, unknown>, creds: Record<string, string>, phoneEnabled: boolean): Promise<string> {
   const GITHUB_TOKEN = creds.GITHUB_TOKEN || process.env.GITHUB_TOKEN || ''
-  // Vapi is a managed service — always uses server credentials, gated by plan.
   const VAPI_TOKEN = process.env.VAPI_TOKEN || ''
   const VAPI_PHONE_NUMBER_ID = process.env.VAPI_PHONE_NUMBER_ID || ''
-  const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID || ''
   switch (name) {
     case 'github-search': {
       const res = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(args.query as string)}`, { headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' } })
@@ -67,7 +72,7 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       const q = args.query as string
       const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`)
       const ddgData = await ddgRes.json()
-      const results: any[] = []
+      const results: { type: string; text: string; url?: string; source?: string }[] = []
       if (ddgData.AbstractText) results.push({ type: 'abstract', text: ddgData.AbstractText, source: ddgData.AbstractURL })
       for (const t of ddgData.RelatedTopics || []) {
         if (t.Text) results.push({ type: 'related', text: t.Text, url: t.FirstURL })
@@ -84,12 +89,12 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       return content
     }
     case 'file-read': {
-      const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, args.path as string))
+      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
       if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
-      return await readFile(safePath, 'utf-8')
+      try { return await readFile(safePath, 'utf-8') } catch { return JSON.stringify({ error: 'File not found' }) }
     }
     case 'file-write': {
-      const safePath = resolve(/*turbopackIgnore: true*/ join(WORKSPACE_ROOT, args.path as string))
+      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
       if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
       await mkdir(resolve(safePath, '..'), { recursive: true })
       await writeFile(safePath, args.content as string, 'utf-8')
@@ -101,19 +106,56 @@ async function executeTool(userId: string, name: string, args: Record<string, un
     }
     case 'phone-call': {
       if (!phoneEnabled) return JSON.stringify({ error: 'Phone calls require a Pro or Unlimited plan.' })
-      if (!VAPI_TOKEN || !VAPI_PHONE_NUMBER_ID || !VAPI_ASSISTANT_ID) return JSON.stringify({ error: 'Phone calls are not configured on the server.' })
-      const vapiRes = await fetch('https://api.vapi.ai/call', { method: 'POST', headers: { 'Authorization': `Bearer ${VAPI_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumberId: VAPI_PHONE_NUMBER_ID, assistantId: VAPI_ASSISTANT_ID, customer: { number: args.number as string }, assistantOverrides: { variableValues: { context: args.context || 'No prior context', user_name: 'User' } } }) })
+      if (!VAPI_TOKEN || !VAPI_PHONE_NUMBER_ID) return JSON.stringify({ error: 'Phone calls are not configured on the server.' })
+      const number = (args.number as string).trim().replace(/\s+/g, '')
+      if (!/^\+\d{6,15}$/.test(number)) return JSON.stringify({ error: 'Invalid phone number. Use E.164 format like +33634554177.' })
+
+      // Build context from template if provided, otherwise use raw context
+      let callContext = (args.context as string) || 'No prior context'
+      let templateLabel = 'Phone call'
+      const tplId = args.template as string
+      const tplValues = args.templateValues as Record<string, string>
+      if (tplId) {
+        const tpl = getTemplate(tplId)
+        if (tpl && tplValues) {
+          callContext = tpl.buildContext(tplValues)
+          templateLabel = tpl.label
+        }
+      }
+
+      // Pick assistant based on country code
+      const frAssistant = process.env.VAPI_ASSISTANT_ID_FR || process.env.VAPI_ASSISTANT_ID || ''
+      const enAssistant = process.env.VAPI_ASSISTANT_ID_EN || process.env.VAPI_ASSISTANT_ID || ''
+      const assistantId = number.startsWith('+33') ? frAssistant : enAssistant
+      if (!assistantId) return JSON.stringify({ error: 'Phone calls are not configured on the server.' })
+
+      const vapiRes = await fetch('https://api.vapi.ai/call', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${VAPI_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phoneNumberId: VAPI_PHONE_NUMBER_ID,
+          assistantId,
+          customer: { number },
+          assistantOverrides: { variableValues: { context: callContext, user_name: 'User' } },
+        }),
+      })
       const callData = await vapiRes.json()
       if (!vapiRes.ok) return JSON.stringify({ error: callData.message || 'Vapi error' })
-      await supabaseAdmin.from('calls').insert({ user_id: userId, phone_number: args.number as string, call_id: callData.id, status: 'initiated' })
-      return JSON.stringify({ callId: callData.id, status: callData.status })
+      await supabaseAdmin.from('calls').insert({ user_id: userId, phone_number: number, call_id: callData.id, status: 'initiated', template: templateLabel })
+      return JSON.stringify({ callId: callData.id, status: callData.status, template: templateLabel, message: `Call placed to ${number}. The assistant will report back when the call completes.` })
     }
     default: return JSON.stringify({ error: `Unknown tool: ${name}` })
   }
 }
 
+type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: unknown[]; tool_call_id?: string; name?: string }
+
+function sseEncode(data: unknown): string {
+  return `data: ${JSON.stringify(data)}\n\n`
+}
+
 export async function POST(req: NextRequest) {
-  const { message, conversationId, tools: enabledTools, messages: history } = await req.json()
+  const { message, conversationId, tools: enabledTools, messages: history, stream: wantStream } = await req.json()
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -139,16 +181,14 @@ export async function POST(req: NextRequest) {
   }
   await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'user', content: message })
 
-  type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }
   const ollamaMessages: OllamaMsg[] = [
     { role: 'system', content: SYSTEM_PROMPT },
-    ...(history || []).map((m: any) => ({ role: m.role, content: m.content })),
+    ...(history || []).map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }) as OllamaMsg),
     { role: 'user', content: message },
   ]
 
   // Use tools from the request, or fall back to saved settings
   const enabled = new Set<string>(enabledTools?.length > 0 ? enabledTools : Array.from(savedEnabledTools))
-  // Managed phone-call tool: gated by plan, regardless of user toggle.
   const phoneAllowed = canUsePhoneCalls(profile)
   if (!phoneAllowed) enabled.delete('phone-call')
   const activeTools = enabled.size > 0 ? TOOL_DEFINITIONS.filter(t => enabled.has(t.function.name)) : TOOL_DEFINITIONS.filter(t => t.function.name !== 'phone-call' || phoneAllowed)
@@ -156,11 +196,149 @@ export async function POST(req: NextRequest) {
   let finalResponse = ''
   let rounds = 0
 
+  // Streaming mode — SSE
+  if (wantStream) {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (data: unknown) => controller.enqueue(encoder.encode(sseEncode(data)))
+        send({ type: 'conversation', conversationId: convId })
+
+        try {
+          while (rounds < MAX_TOOL_ROUNDS) {
+            rounds++
+            // For tool-calling rounds, use non-streaming to get the full response
+            // For the final response round, use streaming for real-time tokens
+            const requestBody: Record<string, unknown> = {
+              model: OLLAMA_MODEL,
+              messages: ollamaMessages,
+              stream: false, // Non-stream for tool rounds; we'll stream the final answer
+            }
+            if (activeTools.length > 0) requestBody.tools = activeTools
+
+            const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(OLLAMA_API_KEY ? { 'Authorization': `Bearer ${OLLAMA_API_KEY}` } : {}),
+              },
+              body: JSON.stringify(requestBody),
+            })
+
+            if (!res.ok) {
+              const errText = await res.text().catch(() => res.statusText)
+              finalResponse = `Model error (${res.status}): ${errText.slice(0, 200)}`
+              send({ type: 'error', error: finalResponse })
+              break
+            }
+
+            const data = await res.json()
+            const msg = data.message || data.choices?.[0]?.message
+            if (!msg) { finalResponse = 'No response from model.'; send({ type: 'error', error: finalResponse }); break }
+
+            // Tool calls — execute and continue
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+              ollamaMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
+              // Notify frontend which tools are being called
+              for (const tc of msg.tool_calls) {
+                const toolName = tc.function?.name || tc.name
+                send({ type: 'tool_start', tool: toolName, round: rounds })
+              }
+              // Execute all tool calls in parallel
+              const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string }; id?: string; name?: string }) => {
+                const toolName = tc.function?.name || tc.name || ''
+                let toolArgs: Record<string, unknown> = {}
+                try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { /* empty */ }
+                const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed)
+                toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
+                send({ type: 'tool_done', tool: toolName, round: rounds })
+                return { tc, result, toolName }
+              }))
+              // Push results back to the model
+              for (const { tc, result, toolName } of toolResults) {
+                ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
+              }
+              continue
+            }
+
+            // Final answer — stream it
+            finalResponse = msg.content || 'No response.'
+
+            // Stream the final response token by token
+            // Re-request with streaming enabled for just the final message
+            const streamRequestBody: Record<string, unknown> = {
+              model: OLLAMA_MODEL,
+              messages: ollamaMessages,
+              stream: true,
+            }
+            // No tools on the final streaming call — we want the answer, not more tool calls
+            const streamRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(OLLAMA_API_KEY ? { 'Authorization': `Bearer ${OLLAMA_API_KEY}` } : {}),
+              },
+              body: JSON.stringify(streamRequestBody),
+            })
+
+            if (streamRes.ok && streamRes.body) {
+              const reader = streamRes.body.getReader()
+              const decoder = new TextDecoder()
+              let buffer = ''
+              let streamedContent = ''
+
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+                for (const line of lines) {
+                  if (!line.trim()) continue
+                  try {
+                    const chunk = JSON.parse(line)
+                    const token = chunk.message?.content || chunk.choices?.[0]?.delta?.content || ''
+                    if (token) {
+                      streamedContent += token
+                      send({ type: 'token', content: token })
+                    }
+                  } catch { /* skip invalid json */ }
+                }
+              }
+              if (streamedContent) finalResponse = streamedContent
+            } else {
+              // Fallback — send the full response at once
+              send({ type: 'token', content: finalResponse })
+            }
+            break
+          }
+
+          if (!finalResponse) finalResponse = 'I reached the tool-call limit without a final answer.'
+          await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: finalResponse })
+          send({ type: 'done', conversationId: convId, toolCalls: toolCallsLog })
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: `Error: ${msg}` })
+          send({ type: 'error', error: msg })
+        }
+        controller.close()
+      },
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
+  }
+
+  // Non-streaming mode (fallback)
   try {
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++
-      // Build request — Ollama native API (/api/chat)
-      const requestBody: any = {
+      const requestBody: Record<string, unknown> = {
         model: OLLAMA_MODEL,
         messages: ollamaMessages,
         stream: false,
@@ -175,27 +353,29 @@ export async function POST(req: NextRequest) {
         },
         body: JSON.stringify(requestBody),
       })
-      
+
       if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText)
         finalResponse = `Model error (${res.status}): ${errText.slice(0, 200)}`
         break
       }
-      
+
       const data = await res.json()
-      // Ollama native API returns { message: { role, content, tool_calls } }
-      // OpenAI-compatible returns { choices: [{ message: { ... } }] }
       const msg = data.message || data.choices?.[0]?.message
       if (!msg) { finalResponse = 'No response from model.'; break }
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         ollamaMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
-        for (const tc of msg.tool_calls) {
-          const toolName = tc.function?.name || tc.name
+        // Execute tool calls in parallel
+        const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string }; id?: string; name?: string }) => {
+          const toolName = tc.function?.name || tc.name || ''
           let toolArgs: Record<string, unknown> = {}
-          try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { toolArgs = {} }
+          try { toolArgs = JSON.parse(tc.function?.arguments || '{}') } catch { /* empty */ }
           const result = await executeTool(user.id, toolName, toolArgs, userCreds, phoneAllowed)
           toolCallsLog.push({ name: toolName, result: `Executed ${toolName}` })
+          return { tc, result, toolName }
+        }))
+        for (const { tc, result, toolName } of toolResults) {
           ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
         }
         continue
@@ -206,9 +386,9 @@ export async function POST(req: NextRequest) {
     if (!finalResponse) finalResponse = 'I reached the tool-call limit without a final answer.'
     await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: finalResponse })
     return Response.json({ response: finalResponse, conversationId: convId, toolCalls: toolCallsLog })
-  } catch (e: any) {
-    const errMsg = `Error: ${e.message}`
-    await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: errMsg })
-    return Response.json({ response: errMsg, conversationId: convId, toolCalls: toolCallsLog })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'assistant', content: `Error: ${msg}` })
+    return Response.json({ response: `Error: ${msg}`, conversationId: convId, toolCalls: toolCallsLog })
   }
 }
