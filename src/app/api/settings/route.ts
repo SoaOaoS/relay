@@ -15,7 +15,7 @@ export async function GET() {
   // Load enabled tools from user_settings
   const { data: settings } = await supabase
     .from('user_settings')
-    .select('enabled_tools')
+    .select('enabled_tools, system_prompt')
     .eq('user_id', user.id)
     .single()
 
@@ -35,6 +35,7 @@ export async function GET() {
   return Response.json({
     enabledTools: settings?.enabled_tools || [],
     configuredCreds,
+    systemPrompt: settings?.system_prompt || '',
   })
 }
 
@@ -44,14 +45,15 @@ export async function PUT(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { enabledTools, mcpConfig } = await req.json()
+  const { enabledTools, mcpConfig, systemPrompt } = await req.json()
 
-  // Save enabled tools
+  // Save enabled tools + system prompt
   const { error: settingsErr } = await supabaseAdmin
     .from('user_settings')
     .upsert({
       user_id: user.id,
       enabled_tools: enabledTools || [],
+      system_prompt: systemPrompt || '',
       updated_at: new Date().toISOString(),
     })
 

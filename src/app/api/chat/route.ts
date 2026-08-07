@@ -188,9 +188,10 @@ export async function POST(req: NextRequest) {
   await supabaseAdmin.from('profiles').upsert({ id: user.id, messages_used: used + 1 })
 
   // Load user's MCP config (credentials + enabled tools)
-  const { data: userSettings } = await supabaseAdmin.from('user_settings').select('mcp_config, enabled_tools').eq('user_id', user.id).single()
+  const { data: userSettings } = await supabaseAdmin.from('user_settings').select('mcp_config, enabled_tools, system_prompt').eq('user_id', user.id).single()
   const userCreds = buildCredEnv(userSettings?.mcp_config || {})
   const savedEnabledTools = new Set<string>(userSettings?.enabled_tools || [])
+  const userSystemPrompt = (userSettings?.system_prompt as string) || ''
 
   // Load user's MCP servers and connect to them
   const { data: userMCPServers } = await supabaseAdmin
@@ -213,7 +214,7 @@ export async function POST(req: NextRequest) {
   await supabaseAdmin.from('messages').insert({ conversation_id: convId, role: 'user', content: message })
 
   const ollamaMessages: OllamaMsg[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: userSystemPrompt ? `${SYSTEM_PROMPT}\n\n## USER INSTRUCTIONS\nThe user has provided the following custom instructions. Follow them in addition to your default behaviour:\n\n${userSystemPrompt}` : SYSTEM_PROMPT },
     ...(history || []).map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }) as OllamaMsg),
     { role: 'user', content: message },
   ]

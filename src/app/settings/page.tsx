@@ -20,6 +20,7 @@ export default function SettingsPage() {
   const [showAddServer, setShowAddServer] = useState(false)
   const [newServer, setNewServer] = useState({ name: '', command: '', args: '', env: '' })
   const [addingServer, setAddingServer] = useState(false)
+  const [systemPrompt, setSystemPrompt] = useState('')
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -33,6 +34,7 @@ export default function SettingsPage() {
     const data = await res.json()
     if (data.mcpConfig) setMcpConfig(data.mcpConfig)
     if (data.enabledTools) setEnabledTools(new Set(data.enabledTools))
+    if (data.systemPrompt !== undefined) setSystemPrompt(data.systemPrompt)
     setLoading(false)
     loadMCPServers()
   }
@@ -86,6 +88,7 @@ export default function SettingsPage() {
       body: JSON.stringify({
         mcpConfig,
         enabledTools: Array.from(enabledTools),
+        systemPrompt,
       }),
     })
     setSaving(false)
@@ -362,6 +365,22 @@ export default function SettingsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Custom System Prompt */}
+        <div className="mt-12">
+          <h2 className="text-2xl font-bold mb-2">Custom Instructions</h2>
+          <p className="text-zinc-400 mt-1 text-sm mb-4">Add custom instructions that are appended to Relay's system prompt. Use this to set personality, language preferences, response style, or specific behaviour rules.</p>
+          <div className="rounded-2xl border border-zinc-800 bg-[#111113] p-5">
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="e.g. Always respond in French. Be concise and direct. When making restaurant reservations, always ask for a confirmation number. You are a helpful assistant focused on productivity."
+              rows={6}
+              className="w-full px-4 py-3 bg-[#0a0a0b] border border-zinc-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition resize-y"
+            />
+            <p className="text-xs text-zinc-500 mt-2">{systemPrompt.length} characters — these instructions are appended to the AI's core system prompt on every message.</p>
           </div>
         </div>
 
