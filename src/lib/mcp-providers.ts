@@ -60,17 +60,6 @@ export const MCP_PROVIDERS: MCPProvider[] = [
     ],
   },
   {
-    id: 'files',
-    name: 'File Operations',
-    description: 'Read, write, and search files',
-    icon: 'file',
-    tools: [
-      { id: 'file-read', name: 'File Read', description: 'Read files from workspace' },
-      { id: 'file-write', name: 'File Write', description: 'Write and edit files' },
-      { id: 'file-glob', name: 'File Search', description: 'Find files by pattern' },
-    ],
-  },
-  {
     id: 'phone',
     name: 'Phone Calls',
     description: 'AI-powered outbound calls — included on Pro & Unlimited',

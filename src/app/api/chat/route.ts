@@ -1,9 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { resolve, join } from 'path'
-import { readFile, writeFile, mkdir } from 'fs/promises'
-import { glob as globAsync } from 'glob'
 import { buildCredEnv } from '@/lib/mcp-providers'
 import { canUsePhoneCalls } from '@/lib/stripe'
 import { getTemplate } from '@/lib/call-templates'
@@ -12,7 +9,7 @@ import { connectMCPClient, mcpToolsToDefinitions, type UserMCPServer, type MCPCl
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'https://ollama.com'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:70b'
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || ''
-const WORKSPACE_ROOT = resolve(process.env.WORKSPACE_ROOT || process.cwd())
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || process.cwd()
 const MAX_TOOL_ROUNDS = 30
 
 const SYSTEM_PROMPT = `You are Relay, a personal AI assistant that gets things done — not just chat.
@@ -22,22 +19,18 @@ You have access to tools. Use them proactively and chain them together when a re
 - web-fetch: read the full content of a web page (use after web-search to dig deeper)
 - github-search: find code, issues, PRs across GitHub
 - github-read: read a file from any GitHub repo
-- file-read: read a file from the workspace
-- file-write: create or overwrite a file in the workspace
-- file-glob: find files by glob pattern
 - phone-call: place an AI phone call to a number
 
 How you work:
 1. Analyse the request. If it needs external info or action, call the right tool(s).
 2. Read tool results, then continue reasoning or call more tools if needed.
-3. You can call multiple tools in one round, and chain rounds up to 10 deep.
+3. You can call multiple tools in one round, and chain rounds up to 30 deep.
 4. When you have enough information, give a clear, helpful final answer.
 5. Briefly mention which tools you used at the end.
 
 Examples of multi-tool chains:
 - "Find the best headphones under $200 and call the store": web-search → web-fetch (read reviews) → phone-call
-- "Check this repo's README and save a summary": github-read → file-write
-- "Search for X and save the results to a file": web-search → file-write
+- "Check this repo's README and summarize": github-read → web-search (for context)
 
 Be proactive, concise, and helpful. You help with research, writing, analysis, coding, planning, calls — anything.`
 
@@ -46,9 +39,6 @@ const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'web-fetch', description: 'Fetch and read the full content of a web page URL.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The URL to fetch' } }, required: ['url'] } } },
   { type: 'function' as const, function: { name: 'github-search', description: 'Search for code, issues, and PRs across GitHub repositories.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query (supports GitHub search syntax)' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'github-read', description: 'Read a file from a GitHub repository.', parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' } }, required: ['owner', 'repo', 'path'] } } },
-  { type: 'function' as const, function: { name: 'file-read', description: 'Read a file from the workspace filesystem.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
-  { type: 'function' as const, function: { name: 'file-write', description: 'Write content to a file in the workspace.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
-  { type: 'function' as const, function: { name: 'file-glob', description: 'Find files in the workspace by glob pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound phone call. The assistant will speak on your behalf.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
 ]
 
@@ -106,22 +96,6 @@ async function executeTool(userId: string, name: string, args: Record<string, un
       } catch (e) {
         return JSON.stringify({ error: `Failed to fetch ${url}: ${e instanceof Error ? e.message : String(e)}` })
       }
-    }
-    case 'file-read': {
-      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
-      if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
-      try { return await readFile(safePath, 'utf-8') } catch { return JSON.stringify({ error: 'File not found' }) }
-    }
-    case 'file-write': {
-      const safePath = resolve(join(WORKSPACE_ROOT, args.path as string))
-      if (!safePath.startsWith(WORKSPACE_ROOT)) return JSON.stringify({ error: 'Path outside workspace' })
-      await mkdir(resolve(safePath, '..'), { recursive: true })
-      await writeFile(safePath, args.content as string, 'utf-8')
-      return JSON.stringify({ ok: true, bytes: (args.content as string).length })
-    }
-    case 'file-glob': {
-      const matches = await globAsync(args.pattern as string, { cwd: WORKSPACE_ROOT, ignore: ['**/node_modules/**', '**/.git/**', '**/.next/**'] })
-      return JSON.stringify({ files: matches.slice(0, 100) })
     }
     case 'phone-call': {
       if (!phoneEnabled) return JSON.stringify({ error: 'Phone calls require a Pro or Unlimited plan.' })
