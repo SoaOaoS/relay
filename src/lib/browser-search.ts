@@ -29,7 +29,9 @@ async function getBrowser(): Promise<Browser> {
 
 // Execute a series of browser actions in sequence — like a human driving a browser
 export async function browserAction(params: {
-  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval'
+  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval' | 'batch'
+  // batch: array of actions to execute in sequence
+  actions?: { action: string; selector?: string; text?: string; value?: string; url?: string; key?: string; delay?: number; steps?: number }[]
   selector?: string // CSS selector
   text?: string // Text to type, or button text to find for click
   value?: string // Value for select dropdown
@@ -243,6 +245,27 @@ export async function browserAction(params: {
         } catch (e) {
           return JSON.stringify({ error: `Eval failed: ${e instanceof Error ? e.message : String(e)}` })
         }
+      }
+
+      case 'batch': {
+        // Execute multiple actions in sequence — saves tool-call rounds
+        const actions = params.actions || []
+        const results: unknown[] = []
+        for (const act of actions) {
+          const r = await browserAction({
+            action: act.action as 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval',
+            selector: act.selector,
+            text: act.text,
+            value: act.value,
+            url: act.url,
+            key: act.key,
+            delay: act.delay,
+            steps: act.steps,
+          })
+          results.push(JSON.parse(r))
+        }
+        return JSON.stringify({ results })
+      }
       }
 
       default:
