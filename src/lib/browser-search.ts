@@ -8,11 +8,28 @@ const LAUNCH_ARGS = [
   '--disable-gpu',
   '--disable-dev-shm-usage',
   '--window-size=1920,1080',
+  '--lang=en-US',
 ]
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-// Search the web using Puppeteer + Google
+// Decode a Bing tracking URL to get the real URL
+function decodeBingUrl(bingUrl: string): string {
+  try {
+    const url = new URL(bingUrl)
+    const u = url.searchParams.get('u')
+    if (u) {
+      // Bing encodes the URL as base64-ish in the 'u' param, prefixed with 'a1'
+      const decoded = Buffer.from(u.startsWith('a1') ? u.slice(2) : u, 'base64').toString('utf-8')
+      if (decoded.startsWith('http')) return decoded
+    }
+    return bingUrl
+  } catch {
+    return bingUrl
+  }
+}
+
+// Search the web using Puppeteer + Bing (forced English)
 export async function webSearch(query: string): Promise<{ results: { title: string; url: string; snippet: string }[]; error?: string }> {
   let browser
   try {
@@ -24,45 +41,33 @@ export async function webSearch(query: string): Promise<{ results: { title: stri
 
     const page = await browser.newPage()
     await page.setUserAgent(UA)
-    // Use Google search — more reliable than DDG HTML
-    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`, {
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+    // Force English results with setlang and cc params
+    await page.goto(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10&setlang=en-US&cc=US`, {
       waitUntil: 'networkidle2',
       timeout: 15000,
     })
 
-    // Extract results from Google
     const results = await page.evaluate(() => {
       const items: { title: string; url: string; snippet: string }[] = []
-      // Google results are in div.g with a > h3 and a span
-      const resultDivs = document.querySelectorAll('div.g')
-      resultDivs.forEach((div, i) => {
+      const resultItems = document.querySelectorAll('li.b_algo')
+      resultItems.forEach((li, i) => {
         if (i >= 10) return
-        const link = div.querySelector('a') as HTMLAnchorElement
-        const title = div.querySelector('h3')?.textContent?.trim() || ''
-        // Snippet is usually in a span or div after the link
-        const snippetEl = div.querySelector('.VwiC3b') || div.querySelector('[data-snc] span') || div.querySelector('span:last-child')
-        const snippet = snippetEl?.textContent?.trim() || ''
+        const link = li.querySelector('h2 a') as HTMLAnchorElement
+        const title = link?.textContent?.trim() || li.querySelector('h2')?.textContent?.trim() || ''
+        const snippet = li.querySelector('.b_caption p')?.textContent?.trim() || ''
         if (link?.href && title) {
           items.push({ title, url: link.href, snippet })
         }
       })
-      // Fallback: try another selector pattern
-      if (items.length === 0) {
-        const allLinks = document.querySelectorAll('a:has(h3)')
-        allLinks.forEach((a, i) => {
-          if (i >= 10) return
-          const link = a as HTMLAnchorElement
-          const title = link.querySelector('h3')?.textContent?.trim() || ''
-          if (link.href && title && !link.href.includes('google.com')) {
-            items.push({ title, url: link.href, snippet: '' })
-          }
-        })
-      }
       return items
     })
 
+    // Decode Bing tracking URLs to get real URLs
+    const decoded = results.map(r => ({ ...r, url: decodeBingUrl(r.url) }))
+
     await browser.close()
-    return { results }
+    return { results: decoded }
   } catch (e) {
     if (browser) await browser.close().catch(() => {})
     return { results: [], error: e instanceof Error ? e.message : String(e) }
@@ -81,13 +86,11 @@ export async function webFetch(url: string): Promise<string> {
 
     const page = await browser.newPage()
     await page.setUserAgent(UA)
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 })
 
-    // Extract main text content from the page
     const content = await page.evaluate(() => {
-      // Remove unwanted elements
-      document.querySelectorAll('script, style, nav, footer, header, noscript, iframe, [role="navigation"], [role="banner"], .ad, .ads, .advertisement').forEach(el => el.remove())
-      // Get text from body or main/article if available
+      document.querySelectorAll('script, style, nav, footer, header, noscript, iframe, [role="navigation"], [role="banner"], .ad, .ads, .advertisement, .cookie-banner, .privacy-banner').forEach(el => el.remove())
       const main = document.querySelector('main') || document.querySelector('article') || document.body
       return main?.innerText || ''
     })
