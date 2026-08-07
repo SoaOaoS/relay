@@ -73,26 +73,86 @@ async function executeTool(userId: string, name: string, args: Record<string, un
     }
     case 'web-search': {
       const q = args.query as string
-      const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`)
-      const ddgData = await safeJson(ddgRes)
-      if (ddgData._errors) return JSON.stringify({ error: 'Search failed', query: q })
-      const results: { type: string; text: string; url?: string; source?: string }[] = []
-      if (ddgData.AbstractText) results.push({ type: 'abstract', text: ddgData.AbstractText as string, source: ddgData.AbstractURL as string })
-      for (const t of (ddgData.RelatedTopics as unknown[]) || []) {
-        const topic = t as { Text?: string; FirstURL?: string; Topics?: { Text?: string; FirstURL?: string }[] }
-        if (topic.Text) results.push({ type: 'related', text: topic.Text, url: topic.FirstURL })
-        if (topic.Topics) for (const sub of topic.Topics) if (sub.Text) results.push({ type: 'related', text: sub.Text, url: sub.FirstURL })
+      try {
+        // Use DuckDuckGo HTML endpoint — much more reliable than the JSON API
+        const ddgRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+        })
+        const html = await ddgRes.text()
+        // Parse results from HTML — DDG HTML has results in <a class="result__a" href="...">
+        const results: { type: string; text: string; url?: string }[] = []
+        // Extract result links and snippets
+        const linkRegex = /class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</g
+        const snippetRegex = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g
+        const links: { url: string; title: string }[] = []
+        let match
+        while ((match = linkRegex.exec(html)) !== null) {
+          // DDG wraps URLs in a redirect — extract the actual URL
+          let url = match[1]
+          const uddgMatch = url.match(/uddg=([^&]+)/)
+          if (uddgMatch) url = decodeURIComponent(uddgMatch[1])
+          links.push({ url, title: match[2].trim() })
+        }
+        const snippets: string[] = []
+        while ((match = snippetRegex.exec(html)) !== null) {
+          snippets.push(match[1].replace(/<[^>]+>/g, '').trim())
+        }
+        for (let i = 0; i < Math.min(links.length, 10); i++) {
+          results.push({
+            type: 'result',
+            text: `${links[i].title}${snippets[i] ? ' — ' + snippets[i] : ''}`,
+            url: links[i].url,
+          })
+        }
+        if (results.length === 0) {
+          // Fallback: try the JSON API
+          const ddgJsonRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`)
+          const ddgData = await safeJson(ddgJsonRes)
+          if (ddgData.AbstractText) results.push({ type: 'abstract', text: ddgData.AbstractText as string, url: ddgData.AbstractURL as string })
+          for (const t of (ddgData.RelatedTopics as unknown[]) || []) {
+            const topic = t as { Text?: string; FirstURL?: string; Topics?: { Text?: string; FirstURL?: string }[] }
+            if (topic.Text) results.push({ type: 'related', text: topic.Text, url: topic.FirstURL })
+            if (topic.Topics) for (const sub of topic.Topics) if (sub.Text) results.push({ type: 'related', text: sub.Text, url: sub.FirstURL })
+          }
+        }
+        return JSON.stringify({ results: results.slice(0, 10), query: q })
+      } catch (e) {
+        return JSON.stringify({ error: `Search failed: ${e instanceof Error ? e.message : String(e)}`, query: q })
       }
-      return JSON.stringify({ results: results.slice(0, 10), abstract: (ddgData.AbstractText as string) || '' })
     }
     case 'web-fetch': {
       const url = args.url as string
       try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Relay/1.0' }, redirect: 'follow' })
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(15000),
+        })
+        if (!res.ok) return JSON.stringify({ error: `HTTP ${res.status} for ${url}` })
         const text = await res.text()
         const isHtml = (res.headers.get('content-type') || '').includes('text/html')
-        const content = isHtml ? text.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 20000) : text.slice(0, 20000)
-        return content || 'Empty page'
+        if (isHtml) {
+          // Better HTML parsing — extract text content, remove scripts/styles/nav/footer
+          const content = text
+            .replace(/<script[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[\s\S]*?<\/style>/gi, '')
+            .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+            .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+            .replace(/<header[\s\S]*?<\/header>/gi, '')
+            .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 20000)
+          return content || 'Empty page'
+        }
+        return text.slice(0, 20000)
       } catch (e) {
         return JSON.stringify({ error: `Failed to fetch ${url}: ${e instanceof Error ? e.message : String(e)}` })
       }
