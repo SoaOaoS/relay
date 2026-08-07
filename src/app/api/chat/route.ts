@@ -39,13 +39,14 @@ Use this to read a specific file from a GitHub repository.
 - Use for: "read the README of owner/repo", "show me the package.json of X"
 - Requires: owner, repo, and file path
 
-### browser-action — control a REAL BROWSER step by step
-Use this to interact with websites like a human: navigate to pages, click buttons, type into fields, read the page, and see what's on screen. This is how you fill out forms, make reservations, and handle multi-step booking widgets.
+### browser-action — control a REAL BROWSER step by step (with VISION)
+Use this to interact with websites like a human. You can SEE the page using screenshot_image, then click, type, and fill forms.
 - Use for: "make a reservation", "book a table", "fill out this form", "click the button"
-- WORKFLOW: navigate → screenshot (see what's on the page) → click/type/select → wait → screenshot again → repeat
-- screenshot returns ALL visible buttons, inputs, links, and their selectors — use this to understand the page
+- WORKFLOW: navigate → screenshot_image (SEE the page as an image) → click/type/select → wait → screenshot_image again → repeat
+- screenshot_image takes a REAL screenshot that you will SEE as an image — use this to understand the page visually
+- screenshot returns a TEXT list of interactive elements — use when you just need selectors quickly
 - The browser stays open between calls — you can chain actions
-- ALWAYS call screenshot first to see what's available before clicking
+- For complex widgets that don't respond to click: use eval to run custom JavaScript
 - ALWAYS call close when done to free the browser
 
 ### phone-call — for making AI PHONE CALLS (LAST RESORT)
@@ -86,7 +87,7 @@ Be proactive, concise, and helpful. You help with research, writing, analysis, c
 const TOOL_DEFINITIONS = [
   { type: 'function' as const, function: { name: 'web-search', description: 'Search the INTERNET (general web) for current information. Use this for general web searches, NOT for GitHub code search. Returns titles, URLs, and snippets.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'The search query' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'web-fetch', description: 'Read the full content of a specific web page URL by rendering it in a real browser. Use AFTER web-search to dig deeper into a result.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'The full URL to fetch (e.g. https://example.com/page)' } }, required: ['url'] } } },
-  { type: 'function' as const, function: { name: 'browser-action', description: 'Control a real browser step by step. Actions: navigate (open URL), click (by selector or button text), type (fill input), select (dropdown), wait (pause), read (get page text), screenshot (list all visible buttons/inputs/links + page text), press_key, scroll, exists (check selector), eval (run custom JavaScript in page for complex widgets), batch (run multiple actions in ONE call — saves rounds), close. Use screenshot FIRST to see what is on the page. Use batch to combine multiple steps (e.g. navigate + wait + screenshot) in a single call. For complex widgets that dont respond to click, use eval to directly manipulate the DOM or trigger events. Chain calls to fill multi-step forms and booking widgets.', parameters: { type: 'object', properties: { action: { type: 'string', description: 'What to do', enum: ['navigate', 'click', 'type', 'select', 'wait', 'read', 'screenshot', 'press_key', 'scroll', 'exists', 'close', 'eval', 'batch'] }, actions: { type: 'array', description: 'For batch action only — array of actions to execute in sequence', items: { type: 'object', properties: { action: { type: 'string' }, selector: { type: 'string' }, text: { type: 'string' }, value: { type: 'string' }, url: { type: 'string' }, key: { type: 'string' }, delay: { type: 'number' }, steps: { type: 'number' } } } }, selector: { type: 'string', description: 'CSS selector (for click, type, select, exists)' }, text: { type: 'string', description: 'Text to type (for type), button text to find (for click), or JavaScript code (for eval)' }, value: { type: 'string', description: 'Value for select dropdown' }, url: { type: 'string', description: 'URL to navigate to' }, key: { type: 'string', description: 'Key to press: Enter, Tab, Escape, ArrowDown, etc.' }, delay: { type: 'number', description: 'Wait time in ms (for wait action)' }, steps: { type: 'number', description: 'Scroll pixels (for scroll action)' } }, required: ['action'] } } },
+  { type: 'function' as const, function: { name: 'browser-action', description: 'Control a real browser step by step. Actions: navigate (open URL), click (by selector or button text), type (fill input), select (dropdown), wait (pause), read (get page text), screenshot (list interactive elements as text), screenshot_image (take a REAL screenshot — you will SEE the page as an image), press_key, scroll, exists (check selector), eval (run custom JavaScript), batch (run multiple actions in ONE call), close. Use screenshot_image to SEE the page like a human would, then click/type to interact. For complex widgets, use screenshot_image to understand the visual layout, then use eval if standard click doesnt work.', parameters: { type: 'object', properties: { action: { type: 'string', description: 'What to do', enum: ['navigate', 'click', 'type', 'select', 'wait', 'read', 'screenshot', 'screenshot_image', 'press_key', 'scroll', 'exists', 'close', 'eval', 'batch'] }, actions: { type: 'array', description: 'For batch action only — array of actions to execute in sequence', items: { type: 'object', properties: { action: { type: 'string' }, selector: { type: 'string' }, text: { type: 'string' }, value: { type: 'string' }, url: { type: 'string' }, key: { type: 'string' }, delay: { type: 'number' }, steps: { type: 'number' } } } }, selector: { type: 'string', description: 'CSS selector (for click, type, select, exists)' }, text: { type: 'string', description: 'Text to type (for type), button text to find (for click), or JavaScript code (for eval)' }, value: { type: 'string', description: 'Value for select dropdown' }, url: { type: 'string', description: 'URL to navigate to' }, key: { type: 'string', description: 'Key to press: Enter, Tab, Escape, ArrowDown, etc.' }, delay: { type: 'number', description: 'Wait time in ms (for wait action)' }, steps: { type: 'number', description: 'Scroll pixels (for scroll action)' } }, required: ['action'] } } },
   { type: 'function' as const, function: { name: 'github-search', description: 'Search GITHUB ONLY — for code, issues, and PRs across GitHub repositories. Do NOT use this for general web searches. Use web-search for general internet searches.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'GitHub search query (supports GitHub search syntax)' } }, required: ['query'] } } },
   { type: 'function' as const, function: { name: 'github-read', description: 'Read a specific FILE from a GitHub repository. Requires owner, repo name, and file path.', parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' } }, required: ['owner', 'repo', 'path'] } } },
   { type: 'function' as const, function: { name: 'phone-call', description: 'Place an AI-powered outbound PHONE CALL. An AI assistant will speak on your behalf to the given number. Use for making reservations, enquiries, appointments by phone.', parameters: { type: 'object', properties: { number: { type: 'string', description: 'Phone number in E.164 format (e.g. +33634554177)' }, context: { type: 'string', description: 'What the call should accomplish — be specific' }, template: { type: 'string', description: 'Optional template ID (appointment, restaurant, hotel, pharmacy, custom)' }, templateValues: { type: 'object', description: 'Field values for the template' } }, required: ['number', 'context'] } } },
@@ -138,7 +139,7 @@ async function executeTool(userId: string, name: string, args: Record<string, un
     }
     case 'browser-action': {
       const result = await browserAction({
-        action: args.action as 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval' | 'batch',
+        action: args.action as 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'screenshot_image' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval' | 'batch',
         actions: (args.actions as { action: string; selector?: string; text?: string; value?: string; url?: string; key?: string; delay?: number; steps?: number }[]) || undefined,
         selector: args.selector as string | undefined,
         text: args.text as string | undefined,
@@ -195,7 +196,7 @@ async function executeTool(userId: string, name: string, args: Record<string, un
   }
 }
 
-type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: unknown[]; tool_call_id?: string; name?: string }
+type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: unknown[]; tool_call_id?: string; name?: string; images?: string[] }
 type ToolCall = { function?: { name?: string; arguments?: string }; id?: string; name?: string }
 
 function sseEncode(data: unknown): string {
@@ -350,7 +351,18 @@ export async function POST(req: NextRequest) {
               }))
               // Push results back to the model
               for (const { tc, result, toolName } of toolResults) {
-                ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
+                // Check if result contains an image (screenshot_image action)
+                if (result.startsWith('IMAGE:')) {
+                  // Inject as a user message with the image so the vision model can see it
+                  const base64 = result.slice(6)
+                  ollamaMessages.push({
+                    role: 'user',
+                    content: `Here is a screenshot of the current page (from ${toolName}). Look at it carefully to understand what buttons, inputs, and form fields are visible. Then decide what action to take next.`,
+                    images: [base64],
+                  })
+                } else {
+                  ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
+                }
               }
               continue
             }
@@ -499,7 +511,16 @@ export async function POST(req: NextRequest) {
           return { tc, result, toolName }
         }))
         for (const { tc, result, toolName } of toolResults) {
-          ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
+          if (result.startsWith('IMAGE:')) {
+            const base64 = result.slice(6)
+            ollamaMessages.push({
+              role: 'user',
+              content: `Here is a screenshot of the current page (from ${toolName}). Look at it carefully to understand what buttons, inputs, and form fields are visible. Then decide what action to take next.`,
+              images: [base64],
+            })
+          } else {
+            ollamaMessages.push({ role: 'tool', content: result, tool_call_id: tc.id, name: toolName })
+          }
         }
         continue
       }

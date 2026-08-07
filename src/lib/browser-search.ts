@@ -29,7 +29,7 @@ async function getBrowser(): Promise<Browser> {
 
 // Execute a series of browser actions in sequence — like a human driving a browser
 export async function browserAction(params: {
-  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval' | 'batch'
+  action: 'navigate' | 'click' | 'type' | 'select' | 'wait' | 'read' | 'screenshot' | 'screenshot_image' | 'press_key' | 'scroll' | 'exists' | 'close' | 'eval' | 'batch'
   // batch: array of actions to execute in sequence
   actions?: { action: string; selector?: string; text?: string; value?: string; url?: string; key?: string; delay?: number; steps?: number }[]
   selector?: string // CSS selector
@@ -204,6 +204,14 @@ export async function browserAction(params: {
           return { pageText, interactive: deduped }
         })
         return JSON.stringify({ ...result, url: page.url() })
+      }
+
+      case 'screenshot_image': {
+        // Take an actual PNG screenshot and return it as base64
+        // The chat route will inject this into the next message as an image
+        // so the vision model can SEE the page
+        const screenshot = await page.screenshot({ encoding: 'base64', type: 'png' })
+        return `IMAGE:${screenshot}`
       }
 
       case 'press_key': {
