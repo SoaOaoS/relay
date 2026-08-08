@@ -49,6 +49,17 @@ Use this to interact with websites like a human. You can SEE the page using scre
 - For complex widgets that don't respond to click: use eval to run custom JavaScript
 - ALWAYS call close when done to free the browser
 
+## BROWSER ACTION RULES — READ CAREFULLY
+1. Use batch to combine steps: navigate + wait + screenshot in ONE call
+2. After clicking something, use eval to VERIFY the result — but ONLY ONCE. Do not check the same thing more than once.
+3. If eval confirms a selection was made (e.g. selectedValue: "4"), MOVE ON to the next step immediately. Do NOT re-check.
+4. Do NOT take more than 2 screenshots in a row without taking an action between them.
+5. If a click doesn't work, try eval ONCE to trigger it. If that also doesn't work, try a different approach. Do NOT repeat the same action.
+6. Keep track of your progress: Date ✓ → Time ✓ → Guests ✓ → Continue button → Contact form → Submit
+7. When you see a "Continue" or "Next" or "Pokračovat" button after filling fields, CLICK IT. Don't verify first — just click.
+8. Do NOT use more than 1 eval per action. If it didn't work, move on to the next approach.
+9. When all form fields are filled, find the submit button and click it. Then screenshot to see the confirmation.
+
 ### phone-call — for making AI PHONE CALLS (LAST RESORT)
 Use this ONLY when browser-action can't complete the task (e.g. website has no booking form, or form is broken). An AI assistant will speak on your behalf.
 - Use for: "call this number", "phone this restaurant" — but ONLY after trying browser-action first
@@ -197,10 +208,19 @@ async function executeTool(userId: string, name: string, args: Record<string, un
 }
 
 type OllamaMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: unknown[]; tool_call_id?: string; name?: string; images?: string[] }
-type ToolCall = { function?: { name?: string; arguments?: string }; id?: string; name?: string }
+type ToolCall = { function?: { name?: string; arguments?: string | Record<string, unknown> }; id?: string; name?: string }
 
 function sseEncode(data: unknown): string {
   return `data: ${JSON.stringify(data)}\n\n`
+}
+
+// Detect if the LLM is stuck in a loop — same tool+action repeated
+function detectLoop(toolCallsLog: { name: string; result: string }[], currentCall: string): boolean {
+  if (toolCallsLog.length < 3) return false
+  const last3 = toolCallsLog.slice(-3)
+  // Compare first 100 chars of result — if all 3 are the same, it's a loop
+  const sig = (t: { name: string; result: string }) => t.name + ':' + t.result.slice(0, 100)
+  return sig(last3[0]) === sig(last3[1]) && sig(last3[1]) === sig(last3[2])
 }
 
 export async function POST(req: NextRequest) {
@@ -327,6 +347,17 @@ export async function POST(req: NextRequest) {
             // Tool calls — execute and continue
             if (msg.tool_calls && msg.tool_calls.length > 0) {
               ollamaMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
+
+              // Check for loops — if the LLM keeps doing the same thing, force it to answer
+              const currentCallSig = msg.tool_calls.map((tc: ToolCall) => tc.function?.name + ':' + JSON.stringify(tc.function?.arguments || '').slice(0, 80)).join('|')
+              if (detectLoop(toolCallsLog, currentCallSig)) {
+                // Inject a message telling the LLM to stop looping and give a final answer
+                ollamaMessages.push({
+                  role: 'user',
+                  content: 'You seem to be repeating the same action. STOP checking and MOVE ON to the next step. If you have verified a selection, click the Continue/Next/Submit button now. If you have filled all fields, submit the form. Give me your final answer about what happened.',
+                })
+              }
+
               // Notify frontend which tools are being called
               for (const tc of msg.tool_calls) {
                 const toolName = tc.function?.name || tc.name
@@ -496,6 +527,13 @@ export async function POST(req: NextRequest) {
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         ollamaMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
+        // Loop detection
+        if (detectLoop(toolCallsLog, '')) {
+          ollamaMessages.push({
+            role: 'user',
+            content: 'You seem to be repeating the same action. STOP checking and MOVE ON to the next step. If you have verified a selection, click the Continue/Next/Submit button now. If you have filled all fields, submit the form. Give me your final answer about what happened.',
+          })
+        }
         // Execute tool calls in parallel
         const toolResults = await Promise.all(msg.tool_calls.map(async (tc: { function?: { name?: string; arguments?: string | Record<string, unknown> }; id?: string; name?: string }) => {
           const toolName = tc.function?.name || tc.name || ''
